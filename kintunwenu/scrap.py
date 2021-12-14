@@ -76,14 +76,19 @@ def download_files(urls, n=None, save_files=False, path='data', verbose=1) -> li
 
         try:
             response = requests.get(url)
-        except (ConnectionAbortedError or ConnectionError or ConnectionRefusedError or ConnectionResetError):
+            filename = get_filename(url)
+            nc = Dataset(filename + '.nc', memory=response.content)
+
+        except (ConnectionAbortedError or ConnectionError or
+                ConnectionRefusedError or ConnectionResetError):
             n_fail += 1
             if verbose > 0:
                 print(f'Downloaded {n_succ}/{n} files ({n_fail} omitted) from urls...', end='\r')
             continue
-
-        filename = get_filename(url)
-        nc = Dataset(filename + '.nc', memory=response.content)
+        except Exception as e:
+            print(e)
+            n_fail += 1
+            continue
 
         if hasattr(nc, 'errors'):
             n_fail += 1
