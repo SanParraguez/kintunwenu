@@ -1,23 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Santiago Parraguez Cerda
-Universidad de Chile - 2021
-mail: santiago.parraguez@ug.uchile.cl
-
-=============
- KINTUN WENU
-=============
-  - UTILS
+=======================================================
+===                   KINTUN-WENU                   ===
+=======================================================
+-> UTILS
 
 Provides classes to handle different type of datasets retrieved from https://disc.gsfc.nasa.gov
 """
-__all__ = ['_standardise_unit_string', '_smoothn_fill']
-# ============= IMPORTS ===============
-import numpy as np
+__all__ = [
+    '_standardise_unit_string',
+    '_smoothn_fill'
+]
 
+# ============= IMPORTS ===============
+
+import numpy as np
 from scipy.ndimage import label, sum_labels
 from .smoothn import smoothn
+
 # =================================================================================
+
 def _standardise_unit_string(units):
     """
     Standardise units strings.
@@ -30,6 +32,7 @@ def _standardise_unit_string(units):
     return units
 
 # =================================================================================
+
 def _smoothn_fill(data, tolerance=5, s=None, robust=False, grid=None):
     """
     Fill missing values with a smoothn method, based on the cosine discrete transform.

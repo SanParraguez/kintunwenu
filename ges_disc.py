@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Santiago Parraguez Cerda
-Universidad de Chile - 2021
-mail: santiago.parraguez@ug.uchile.cl
-
-=============
- KINTUN WENU
-=============
-  - GES DISC
+=======================================================
+===                   KINTUN-WENU                   ===
+=======================================================
+-> GES DISC
 
 Provides classes to handle different type of datasets retrieved from https://disc.gsfc.nasa.gov
 """
-__all__ = ['GesDiscProduct', 'GesDiscDataset']
+
+__all__ = [
+    'GesDiscProduct',
+    'GesDiscDataset'
+]
+
 # ============= IMPORTS ===============
 import os
 import numpy as np
@@ -20,17 +21,21 @@ import pandas as pd
 from netCDF4 import Dataset
 from .processing import _generate_regular_grid_points, regular_grid_data
 from .scrap import download_files
-from ._utils import _smoothn_fill, _standardise_unit_string
+from .utils import _smoothn_fill, _standardise_unit_string
+
 # =================================================================================
+
 class GesDiscProduct:
-    __module__ = 'kintunwenu'
     """
     Class for manage .nc products from GesDisc, extracting its metadata.
 
     Supports:
         - S5P_L2__NO2
     """
+    __module__ = 'kintunwenu'
+
     # =======================================
+
     def __init__(self, product):
         """
         Parameters
@@ -64,6 +69,7 @@ class GesDiscProduct:
             setattr(self, key, value[:])
 
     # =======================================
+
     @property
     def max(self):
         return self.data.max().astype(np.float32)
@@ -77,6 +83,7 @@ class GesDiscProduct:
         return self.data.shape
 
     # =======================================
+
     def regular_grid(self, lon_lim, lat_lim, grid_space, method='nearest'):
         """
         Returns the coordinates and data of the product in a regular grid.
@@ -97,6 +104,7 @@ class GesDiscProduct:
         return regular_grid_data(self.longitude, self.latitude, self.data, lon_lim, lat_lim, grid_space, method)
 
     # =======================================
+
     def qa_filter(self, qa_value=0.75, copy=True):
         """
         Mask data in product where qa_value is lower than threshold.
@@ -111,12 +119,15 @@ class GesDiscProduct:
         return np.ma.masked_where(self.qa_value < qa_value, self.data, copy=copy)
 
 # =================================================================================
+
 class GesDiscDataset:
-    __module__ = 'kintunwenu'
     """
     Class for manage a dataset of .nc products from GesDisc based in the ktw.GesDiscProduct class.
     """
+    __module__ = 'kintunwenu'
+
     # =======================================
+
     def __init__(self, coordinates, resolution,
                  interpolation='nearest', units='umol/m2', qa_filter=None,
                  **kwargs):
@@ -171,6 +182,7 @@ class GesDiscDataset:
         self._datetime_index = None
 
     # =======================================
+
     @property
     def max(self):
         return self.data.max().astype(np.float32)
@@ -194,6 +206,7 @@ class GesDiscDataset:
         return self.data[i]
 
     # =======================================
+
     def mean(self, axis=0, *kwargs):
         """
         Compute the arithmetic mean along the specified axis. Based on np.mean().
@@ -205,6 +218,7 @@ class GesDiscDataset:
         return self.data.mean(axis, *kwargs)
 
     # =======================================
+
     def var(self, axis=None, *kwargs):
         """
         Compute the variance along the specified axis. Based on np.var().
@@ -216,6 +230,7 @@ class GesDiscDataset:
         return self.data.var(axis, *kwargs)
 
     # =======================================
+
     def clear_data(self):
         """
         Erase memory of the object
@@ -225,6 +240,7 @@ class GesDiscDataset:
         return None
 
     # =======================================
+
     def load_products(self, product):
         """
         Update the dataset by adding new products.
@@ -276,6 +292,7 @@ class GesDiscDataset:
         return None
 
     # =======================================
+
     def download_products(self, urls, batch_size=None, verbose=1, attempts=1) -> None:
         """
         Download and load into the dataset products from a list of urls. It doesn't save the files into disk.
@@ -294,23 +311,23 @@ class GesDiscDataset:
         """
         n_files = len(urls)
         if batch_size is not None:
-            n_batchs = (n_files + batch_size - 1) // batch_size
+            n_batch = (n_files + batch_size - 1) // batch_size
         else:
-            n_batchs = 1
+            n_batch = 1
             batch_size = n_files
 
         if verbose > 0:
-            print(f'Start download of {n_files} netCDF files in {n_batchs} batches')
+            print(f'Start download of {n_files} netCDF files in {n_batch} batches')
 
-        for batch in range(n_batchs):
+        for batch in range(n_batch):
             if verbose > 0:
-                print(f'Downloading batch {batch + 1}/{n_batchs} of files...', end='\r')
+                print(f'Downloading batch {batch + 1}/{n_batch} of files...', end='\r')
 
             batch_urls, urls = urls[:batch_size], urls[batch_size:]
             products = download_files(urls=batch_urls, verbose=0, save_files=False, attempts=attempts)
 
             if verbose > 0:
-                print(f'Processing and loading batch {batch + 1}/{n_batchs} into dataset...', end='\r')
+                print(f'Processing and loading batch {batch + 1}/{n_batch} into dataset...', end='\r')
 
             self.load_products([GesDiscProduct(prod) for prod in products])
             for prod in products:
@@ -322,6 +339,7 @@ class GesDiscDataset:
         return None
 
     # =======================================
+
     def read_products(self, path, batch_size=None, verbose=1) -> None:
         """
         Load netCDF files from a given directory.
@@ -368,6 +386,7 @@ class GesDiscDataset:
         return None
 
     # =======================================
+
     def create_dataset(self, shape, step=None):
         """
         Extract a dataset of images with specified shape from the products processed.
@@ -396,6 +415,7 @@ class GesDiscDataset:
         return strides
 
     # =======================================
+
     def _transform_units(self, data, dunits):
         """
         Transform data from its original units to the dataset units.

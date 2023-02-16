@@ -12,13 +12,17 @@ Tool for smooth and replace missing data by interpolation using the discrete cos
 [1] Garcia D. (2010) Robust smoothing of gridded data in one and higher dimensions with missing values.
 Computational Statistics & Data Analysis, 2010; 54:1167-1178.
 """
-# ====== IMPORT LIBRARIES ======
+
+# ====== IMPORTS ===============
+
 import numpy as np
 from scipy.fftpack import dctn, idctn
 from scipy.optimize import minimize
 from scipy.stats import median_abs_deviation
 from scipy.ndimage.morphology import distance_transform_edt
+
 # ==============================
+
 def smoothn(y, s=None, tolz=1e-3, z0=None, w=None, di=None, robust=False) -> np.ndarray:
     """
     Fast smooths an array of data based on the cosine discrete transform. Allows to choose the smoothing parameter,
@@ -31,7 +35,7 @@ def smoothn(y, s=None, tolz=1e-3, z0=None, w=None, di=None, robust=False) -> np.
     :param np.ndarray z0: initial guess for z, calculated with nearest neighbor if not provided
     :param np.ndarray w: weights array, if not provided assumes all data has the same confidence
     :param tuple di: grid dimensions, assumed regular if not given
-    :param bool rbst: indicates if the robust iteration is executed
+    :param bool robust: indicates if the robust iteration is executed
     :return: gives the smoothed gridded data, with missing values filled with the prediction done
     """
     # Create MaskedArray in case it contains (NaN, Inf)
@@ -46,7 +50,7 @@ def smoothn(y, s=None, tolz=1e-3, z0=None, w=None, di=None, robust=False) -> np.
     # Create spacing vector
     if di is None:
         di = np.ones(d)
-    di = di/np.max(di)
+    di /= np.max(di)
 
     # Create weights matrix
     if w is None:

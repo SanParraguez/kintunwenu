@@ -1,25 +1,29 @@
 # -*- coding: utf-8 -*-
 """
-Santiago Parraguez Cerda
-Universidad de Chile - 2021
-mail: santiago.parraguez@ug.uchile.cl
-
-=============
- KINTUN WENU
-=============
-  - SCRAP
+=======================================================
+===                   KINTUN-WENU                   ===
+=======================================================
+-> SCRAP
 
 Provides functions to download and process datasets from https://disc.gsfc.nasa.gov.
 """
-__all__ = ['read_links_file', 'download_files', 'download_file', 'read_files']
+__all__ = [
+    'read_links_file',
+    'download_files',
+    'download_file',
+    'read_files'
+]
 # ============= IMPORTS ===============
+
 import os
 import time
 import requests
 from netCDF4 import Dataset
 from pathlib import Path
 from urllib.parse import urlparse
+
 # =================================================================================
+
 def read_links_file(file_path) -> list:
     """
     Returns a list of strings with the links contained in a text file.
@@ -39,6 +43,7 @@ def read_links_file(file_path) -> list:
     return links
 
 # =================================================================================
+
 def download_files(urls, n=None, save_files=False, path='data', verbose=1, attempts=1) -> list:
     """
     Returns a list of netCDF4.Dataset files downloaded from the provided links, or download the files to disk.
@@ -141,6 +146,7 @@ def download_files(urls, n=None, save_files=False, path='data', verbose=1, attem
     return products if not save_files else None
 
 # =================================================================================
+
 def download_file(url) -> Dataset:
     """
     Returns a netCDF4.Dataset downloaded from the provided link.
@@ -158,8 +164,11 @@ def download_file(url) -> Dataset:
     return product
 
 # =================================================================================
-def read_files(path=None) -> list:
 
+def read_files(path=None) -> list:
+    """
+    Read nc4 files from path.
+    """
     list_dir = [f for f in os.listdir(path) if f.split('.')[-1] in ['nc', 'nc4', 'h5', 'he5']]
     if path is None:
         path = ''
@@ -177,6 +186,7 @@ def read_files(path=None) -> list:
     return data_list
 
 # =================================================================================
+
 def get_filename(url):
     """
     Get the filename from a given url.

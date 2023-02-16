@@ -1,22 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-Santiago Parraguez Cerda
-Universidad de Chile - 2021
-mail: santiago.parraguez@ug.uchile.cl
-
-=============
- KINTUN WENU
-=============
-  - PROCESSING
+=======================================================
+===                   KINTUN-WENU                   ===
+=======================================================
+-> PROCESSING
 
 Provides tools to manage GesDiscProduct and generate datasets.
 """
-__all__ = ['regular_grid_data', '_generate_regular_grid_points']
+__all__ = [
+    'regular_grid_data',
+    '_generate_regular_grid_points']
+
 # ============= IMPORTS ===============
+
 import numpy as np
 from scipy.interpolate import griddata
 from scipy.spatial import KDTree
+
 # =================================================================================
+
 def regular_grid_data(x, y, z, xlim, ylim, grid_space, method='nearest'):
     """
     Interpolate into a regular grid, based on specified limits.
