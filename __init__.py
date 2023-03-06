@@ -6,21 +6,28 @@
 ---  Santiago Parraguez Cerda                       ---
 ---  University of Bremen, Germany                  ---
 ---  mail: sanparra@uni-bremen.de                   ---
----  2021                                           ---
+---  2023                                           ---
 =======================================================
 
 Provides classes to handle atmospheric trace datasets.
 Suitable for download, process and visualize satellite data.
 """
-__name__ = 'kintunwenu'
-__version__ = 'v0.1'
-__release__ = '2021-12'
+__name__ = 'kintunwenu2'
+__version__ = '0.2'
+__release__ = '2023-02'
 
+__all__ = [
+    'Kalkuntun',
+    'GridCrafter',
+]
 # ===== IMPORTS =======================================
-
+from . import geodata
+from . import grid
+from . import plot
+from . import polygons
 from . import scrap
-from . import processing
-from .ges_disc import GesDiscProduct, GesDiscDataset
+from . import utils
+from .kalkutun import Kalkuntun, GridCrafter
 
-print("Kintun Wenu {version} ({release})".format(version=__version__, release=__release__))
-# KINTUN WENU: from Mapudungún, means "Search in the sky"
+# print("KintunWenu {version} ({release})".format(version=__version__, release=__release__))
+# KINTUN WENU: from Mapuzungún, means "Search in the sky"
