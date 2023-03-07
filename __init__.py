@@ -12,7 +12,7 @@
 Provides classes to handle atmospheric trace datasets.
 Suitable for download, process and visualize satellite data.
 """
-__name__ = 'kintunwenu2'
+__name__ = 'kintunwenu'
 __version__ = '0.2'
 __release__ = '2023-02'
 
@@ -27,6 +27,7 @@ from . import plot
 from . import polygons
 from . import scrap
 from . import utils
+from . import smoothn
 from .kalkutun import Kalkuntun, GridCrafter
 
 # print("KintunWenu {version} ({release})".format(version=__version__, release=__release__))

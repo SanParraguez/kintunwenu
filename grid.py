@@ -3,7 +3,7 @@
 =======================================================
 ===                   KINTUN-WENU                   ===
 =======================================================
--> REGRID
+GRID
 
 Submodule that contains the functions for regridding.
 """

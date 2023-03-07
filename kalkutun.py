@@ -166,7 +166,7 @@ class Kalkuntun:
         corners = polygons.get_corners_from_coordinates(self.longitude, self.latitude, mode=mode)
         polygons_list = shapely.polygons(corners)
 
-        if return_data:
+        if return_data is True:
             data = self.data[1:-1, 1:-1].flatten() if mode == 'centers' else self.data.flatten()
             return polygons_list, data
         else:
@@ -280,9 +280,6 @@ class GridCrafter:
         self.units = kwargs.pop('units', None)
         self.geod = kwargs.pop('geod', None)
         self.lat_filter = kwargs.pop('lat_filter', None)
-        self.smoothing_factor = kwargs.pop('s', None)
-        self.robust = kwargs.pop('robust', False)
-        self.fill_tolerance = kwargs.pop('fill_tolerance', None)
 
         # Create coordinate grids
         self.lons, self.lats = grid.create_grid(resolution, coordinates[0:2], coordinates[2:4])
@@ -310,9 +307,11 @@ class GridCrafter:
         elif isinstance(product, Dataset):
             kprod = Kalkuntun(product)
         elif isinstance(product, Kalkuntun):
-            pass
+            kprod = product
         else:
             raise TypeError(f'Product type not recognized ({type(product)})')
+
+        # ToDo: cut outside limits
 
         if self.units is not None:
             kprod.convert_units(self.units)
@@ -326,7 +325,7 @@ class GridCrafter:
             df_obs = df_obs[df_obs['value'] > 0.0]
 
         if self.lat_filter is not None:
-            geodata.filter_by_latitude(df_obs, lat_thresh=self.lat_filter)
+            df_obs = geodata.filter_by_latitude(df_obs, lat_thresh=self.lat_filter)
 
         if self.interpolation == 'weighted':
             regrid = grid.weighted_regrid(
