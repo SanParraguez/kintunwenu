@@ -21,6 +21,7 @@ from . import geodata
 from . import grid
 from . import utils
 from . import polygons
+from . import scrap
 
 # =================================================================================
 
@@ -87,6 +88,16 @@ class Kalkutun:
         NotImplementedError
             If the sensor is not supported.
         """
+        if isinstance(dataset, str):
+            # ToDo: improve handling of string
+            try:
+                dataset = Dataset(dataset)
+            except OSError:
+                dataset = scrap.download_ncfile(dataset)
+        elif isinstance(dataset, Kalkutun):
+            # ToDo: handle dataset to be Kalkutun
+            raise NotImplementedError('Kalkutun must be created from a path to file, an url or an actual Dataset')
+
         # Attempt to retrieve sensor information from product
         try:
             self.sensor = dataset.sensor.lower()
@@ -143,6 +154,8 @@ class Kalkutun:
                     else:
                         if getattr(self, my_key) != getattr(other, other_key):
                             return False
+                else:
+                    return False
             return True
         else:
             return False
@@ -331,15 +344,10 @@ class GridCrafter:
         -------
 
         """
-        if isinstance(product, str):
-            with Dataset(product) as ds:
-                kprod = Kalkutun(ds)
-        elif isinstance(product, Dataset):
-            kprod = Kalkutun(product)
-        elif isinstance(product, Kalkutun):
+        if isinstance(product, Kalkutun):
             kprod = product.copy()
         else:
-            raise TypeError(f'Product type not recognized ({type(product)})')
+            kprod = Kalkutun(product)
 
         # ToDo: cut outside limits
 
