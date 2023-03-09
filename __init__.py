@@ -17,7 +17,7 @@ __version__ = '0.2'
 __release__ = '2023-02'
 
 __all__ = [
-    'Kalkuntun',
+    'Kalkutun',
     'GridCrafter',
 ]
 # ===== IMPORTS =======================================
@@ -28,7 +28,7 @@ from . import polygons
 from . import scrap
 from . import utils
 from . import smoothn
-from .kalkutun import Kalkuntun, GridCrafter
+from .kalkutun import Kalkutun, GridCrafter
 
 # print("KintunWenu {version} ({release})".format(version=__version__, release=__release__))
 # KINTUN WENU: from Mapuzungún, means "Search in the sky"

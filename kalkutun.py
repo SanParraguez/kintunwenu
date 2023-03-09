@@ -9,7 +9,7 @@ Provides classes to handle different type of satellite datasets.
 """
 
 __all__ = [
-    'Kalkuntun',
+    'Kalkutun',
     'GridCrafter'
 ]
 
@@ -24,7 +24,7 @@ from . import polygons
 
 # =================================================================================
 
-class Kalkuntun:
+class Kalkutun:
     """
     A class to handle satellite datasets for the TROPOMI sensor.
 
@@ -35,7 +35,7 @@ class Kalkuntun:
     The class provides an interface to easily access and manipulate the product data. It also includes methods to convert
     units, retrieve polygon data, and create a dataframe of the polygon data.
 
-    Kalkuntun: from Mapuzungún, means "Do witchcraft"
+    Kalkutun: from Mapuzungún, means "Do witchcraft"
 
     Attributes
     ----------
@@ -75,7 +75,7 @@ class Kalkuntun:
 
     def __init__(self, dataset):
         """
-        Initializes the Kalkuntun object.
+        Initializes the Kalkutun object.
 
         Parameters
         ----------
@@ -131,6 +131,36 @@ class Kalkuntun:
         # Sensor not recognized
         else:
             raise NotImplementedError('Sensor has not been implemented.')
+
+    # -----------------------------------------------------------------------------
+    def __eq__(self, other):
+        if isinstance(other, Kalkutun):
+            for my_key, other_key in zip(self.__dict__, other.__dict__):
+                if my_key == other_key:
+                    if isinstance(getattr(self, my_key), np.ndarray):
+                        if not np.array_equal(getattr(self, my_key), getattr(other, other_key)):
+                            return False
+                    else:
+                        if getattr(self, my_key) != getattr(other, other_key):
+                            return False
+            return True
+        else:
+            return False
+
+    # -----------------------------------------------------------------------------
+    def copy(self):
+        """
+        Create a copy of the current object.
+
+        Returns
+        -------
+        Kalkuntun
+            A new instance of the current object.
+        """
+        new_object = self.__class__.__new__(self.__class__)
+        new_dict = {k: (v.copy() if callable(getattr(v, 'copy', None)) else v) for k, v in self.__dict__.items()}
+        new_object.__dict__.update(new_dict)
+        return new_object
 
     # -----------------------------------------------------------------------------
     def max(self, *args, **kwargs):
@@ -303,11 +333,11 @@ class GridCrafter:
         """
         if isinstance(product, str):
             with Dataset(product) as ds:
-                kprod = Kalkuntun(ds)
+                kprod = Kalkutun(ds)
         elif isinstance(product, Dataset):
-            kprod = Kalkuntun(product)
-        elif isinstance(product, Kalkuntun):
-            kprod = product
+            kprod = Kalkutun(product)
+        elif isinstance(product, Kalkutun):
+            kprod = product.copy()
         else:
             raise TypeError(f'Product type not recognized ({type(product)})')
 
