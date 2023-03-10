@@ -296,7 +296,6 @@ class GridCrafter:
             coordinates=(-180, 180, -90, 90),
             resolution=(6, 4),
             interpolation='weighted',
-            qa_filter=None,
             min_fill=None,
             **kwargs
     ):
@@ -318,10 +317,10 @@ class GridCrafter:
         else:
             raise AssertionError('Interpolation method must be "weighted".')
 
-        self.qa_filter = qa_filter
         self.min_fill = min_fill
         self.units = kwargs.pop('units', None)
         self.geod = kwargs.pop('geod', None)
+        self.qa_filter = kwargs.pop('qa_filter', None)
         self.lat_filter = kwargs.pop('lat_filter', None)
 
         # Create coordinate grids
@@ -332,34 +331,34 @@ class GridCrafter:
         return self.regrid(*args, **kwargs)
 
     # -----------------------------------------------------------------------------
-    def regrid(self, product, remove_negative=False):
+    def regrid(self, product, qa_filter=None, drop_negatives=False):
         """
 
         Parameters
         ----------
         product
-        remove_negative
+        qa_filter
+        drop_negatives
 
         Returns
         -------
 
         """
-        if isinstance(product, Kalkutun):
-            kprod = product.copy()
-        else:
-            kprod = Kalkutun(product)
+        kprod = product.copy() if isinstance(product, Kalkutun) else Kalkutun(product)
 
         # ToDo: cut outside limits
 
         if self.units is not None:
             kprod.convert_units(self.units)
 
-        if self.qa_filter is not None:
+        if qa_filter is not None:
+            kprod.qa_filter(qa_filter, inplace=True)
+        elif self.qa_filter is not None:
             kprod.qa_filter(self.qa_filter, inplace=True)
 
         df_obs = kprod.get_polygon_dataframe(drop_masked=True)
 
-        if remove_negative is True:
+        if drop_negatives is True:
             df_obs = df_obs[df_obs['value'] > 0.0]
 
         if self.lat_filter is not None:

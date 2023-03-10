@@ -30,14 +30,14 @@ def create_geo_dataset(polygons, data):
     Creates a pandas DataFrame that combines Shapely Polygon objects and data values.
 
     Parameters
-    ------------
+    ----------
     polygons : List[shapely.geometry.Polygon]
         A list of Shapely Polygon objects representing geographical polygons.
     data : List[float]
         A list of float values representing data associated with each polygon.
 
     Returns
-    --------
+    -------
     A pandas DataFrame with two columns:
         - 'value': The data values associated with each polygon.
         - 'polygon': The Shapely Polygon objects representing geographical polygons.
@@ -105,24 +105,25 @@ def filter_over_pole(df, geod=None):
 
     Parameters
     ----------
-    df : pandas.DataFrame
-        A DataFrame containing a 'polygon' column with shapely Polygon objects.
+    df : pandas.DataFrame or pandas.Series
+        If a DataFrame, it must contain a 'polygon' column with shapely Polygon objects. If a Series, it must contain
+        shapely Polygon objects.
     geod : pyproj.Geod, optional
         A Geod object that defines the ellipsoid to use for geodetic calculations. If not provided, an Equirectangular
         projection centered on the Prime Meridian will be used.
 
     Returns
     -------
-    pandas.DataFrame
-        The original DataFrame with the polygons that cross over the pole removed.
+    pandas.DataFrame or pandas.Series
+        If a DataFrame, it is the original DataFrame with the polygons that cross over the pole removed. If a Series,
+        it is the original Series with the polygons that cross over the pole removed.
     """
-    # ToDo: implementation for pd.Series.
-
     if not geod:
         proj = CRS.from_string('+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs')
         geod = proj.get_geod()
 
-    over_pole = df['polygon'].map(lambda poly: is_over_pole(poly, geod))
+    series = df['polygon'] if isinstance(df, pd.DataFrame) else df
+    over_pole = series.map(lambda poly: is_over_pole(poly, geod))
 
     return df[~over_pole]
 
@@ -163,30 +164,3 @@ def filter_by_latitude(df, lat_thresh):
     return df
 
 # =================================================================================
-
-def split_polygons_at_meridian(df, meridian):
-    """
-    Split polygons in a pandas DataFrame at a given meridian.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        The DataFrame containing a "polygon" column of Shapely polygons.
-    meridian : float
-
-    Returns
-    -------
-    pandas.DataFrame
-        A new DataFrame containing the original and the split polygons.
-    """
-    # ToDo: implementation for pd.Series.
-
-    meridian = create_meridian(meridian)
-
-    # Get which polygons intersect meridian
-    intersects = df['polygon']
-
-    # Split each polygon in the DataFrame
-    # splitted_polygons = df['polygon'].apply(lambda poly: split(poly, meridian))
-
-    return

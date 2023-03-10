@@ -10,18 +10,19 @@ Submodule that contains the functions for regridding.
 __all__ = [
     'get_corners_from_coordinates',
     'get_coords_from_polygons',
-    'shift_polygon',
+    # 'shift_polygon_lon',
     'intersects_meridian',
     'create_meridian',
+    'split_polygon_at_line',
     'is_over_pole',
 ]
 
 # === IMPORTS =========================================================
 import numpy as np
-from shapely.geometry import Polygon, LineString
-from shapely.strtree import STRtree
+import shapely
+from shapely.ops import split
 from multiprocessing.pool import ThreadPool, Pool
-from shapely.ops import linemerge, unary_union, polygonize, split
+
 # =================================================================================
 
 def get_corners_from_coordinates(longitude, latitude, mode='center'):
@@ -71,7 +72,7 @@ def get_corners_from_coordinates(longitude, latitude, mode='center'):
 
 def get_coords_from_polygons(polygons):
     """
-    Returns a list of arrays with (point, coord) from a list of polygons.
+    Returns a list of arrays with (n, 2) coordinates from a list of polygons.
 
     Parameters
     ----------
@@ -84,45 +85,42 @@ def get_coords_from_polygons(polygons):
         A list of numpy arrays with shape (n, 2), where n is the number of points in the polygon.
         Each row of the array contains the x and y coordinates of a point in the polygon's boundary.
     """
-    if not isinstance(polygons, (Polygon, list, tuple, set)):
-        raise TypeError(f"Expected 'polygons' to be iterable or a shapely.geometry.Polygon "
-                        f"object, but got {type(polygons)} instead.")
+    if isinstance(polygons, shapely.Polygon):
+        polygons = np.array([polygons])
 
-    if isinstance(polygons, Polygon):
-        polygons = [polygons]
+    coords, indices = shapely.get_coordinates(polygons, return_index=True)
 
-    return [np.array(poly.boundary.xy).T for poly in polygons]
+    return np.split(coords, np.where(indices[1:] != indices[:-1])[0] + 1)
 
 # =================================================================================
 
-def shift_polygon(polygon):
-    """
-    Shifts all longitude negative points in a Polygon object by 360.
-    Just meant to deal with the antimeridian problem.
-
-    Parameters
-    ----------
-    polygon : shapely.geometry.Polygon
-        The Polygon object to be shifted.
-
-    Returns
-    -------
-    shapely.geometry.Polygon
-        The shifted Polygon object.
-    """
-    coords = list(polygon.exterior.coords)
-    shifted_coords = [(lon + 360 if lon < 0 else lon, lat) for lon, lat in coords]
-    return Polygon(shifted_coords)
+# def shift_polygon_lon(polygons, degrees=180):
+#     """
+#     Shifts all longitude negative points in a Polygon object by 180.
+#     Just meant to deal with the antimeridian problem.
+#
+#     Parameters
+#     ----------
+#     polygons : shapely.geometry.Polygon or np.ndarray or pd.Series
+#         The Polygon object to be shifted.
+#     degrees :
+#
+#     Returns
+#     -------
+#     shapely.geometry.Polygon
+#         The shifted Polygon object.
+#     """
+#     return shapely.transform(polygons, lambda x: x + (degrees, 0))
 
 # =================================================================================
 
-def intersects_meridian(polygon, meridian):
+def intersects_meridian(polygons, meridian):
     """
-    Check if a polygon intersects the 180th meridian or the -180th meridian.
+    Check if a polygon intersects a given meridian.
 
     Parameters
     ----------
-    polygon : shapely.geometry.Polygon
+    polygons : shapely.geometry.Polygon
         The polygon to check.
     meridian : float
         Meridian to be checked.
@@ -132,8 +130,7 @@ def intersects_meridian(polygon, meridian):
         True if the polygon intersects given meridian,
         False otherwise.
     """
-    xmin, ymin, xmax, ymax = polygon.bounds
-    return xmin < meridian < xmax
+    return shapely.intersects(polygons, create_meridian(meridian))
 
 # =================================================================================
 
@@ -152,7 +149,7 @@ def create_meridian(longitude):
         A LineString representing the meridian at the given longitude.
 
     """
-    return LineString([(longitude, -90), (longitude, 90)])
+    return shapely.LineString([(longitude, -90), (longitude, 90)])
 
 # =================================================================================
 
@@ -173,7 +170,6 @@ def split_polygon_at_line(polygon, line):
         A list of polygons that are split at the given line.
     """
     return list(split(polygon, line).geoms)
-
 
 # =================================================================================
 
@@ -215,31 +211,47 @@ def is_over_pole(polygon, geod):
 
 # =================================================================================
 
-# def split_anomaly_polygons(polygons, data=None, verbose=1):
-#     """Splits polygons that cross the anomaly of 180 == -180.
-#
-#     Parameters
-#     ----------
-#     polygons : list of shapely.geometry.Polygon
-#         The list of polygons to check if they cross the anomaly.
-#     data : numpy.ndarray, optional
-#         Data to carry with the polygons.
-#     verbose : int, optional
-#         Verbosity level (default is 1).
-#
-#     Returns
-#     -------
-#     list of shapely.geometry.Polygon or tuple of list and numpy.ma.array
-#         The list of the new polygons (and the masked data array, if input data was not None).
-#     """
-#     # Define the LineStrings at the border of the anomaly
-#     borderland = [LineString([(180, -90), (180, 90)]),
-#                   LineString([(-180, -90), (-180, 90)])]
-#
-#     new_polygons, new_data = [], []
-#
-#     for i, poly in enumerate(polygons):
-#
-#
-#     if verbose > 0:
-#         print(f"Split into {len(new_polygons)} polygons")
+def split_anomaly_polygons(polygons, data=None, verbose=1):
+    """Splits polygons that cross the anomaly of 180 == -180.
+
+    Parameters
+    ----------
+    polygons : np.ndarray
+    data : np.ndarray, optional
+        Data to carry with the polygons.
+    verbose : int, optional
+        Verbosity level (default is 1).
+
+    Returns
+    -------
+    list of shapely.geometry.Polygon or tuple of list and numpy.ma.array
+        The list of the new polygons (and the masked data array, if input data was not None).
+    """
+    # ToDo: finish implementation
+    antimeridian = create_meridian(180.)
+    coords = get_coords_from_polygons(polygons)
+
+    try:
+        coords = np.array(coords, dtype=np.float64)
+    except ValueError:
+        raise ValueError('Polygons must have the same amount of corners.')
+
+    # Get weirdly long polygons
+    anomaly = (coords[:, :, 0].max(axis=1) - coords[:, :, 0].min(axis=1)) > 180
+
+    new_coords = coords[anomaly]
+    new_coords[:, :, 0][new_coords[:, :, 0] < 0] += 360
+    new_polygons = shapely.polygons(new_coords)
+    new_polygons = new_polygons[shapely.intersects(new_polygons, antimeridian)]
+    new_polygons = np.array([split_polygon_at_line(poly, antimeridian) for poly in new_polygons])
+
+    # new_polygons = polygons[anomaly]
+    # new_coords = coords[anomaly]
+    # polygons = polygons[~anomaly]
+    # new_coords[:, :, 0][new_coords[:, :, 0] < 0] += 360
+    # new_polygons_2 = shapely.get_rings(shapely.polygons(new_coords))
+
+    if verbose > 0:
+        print(f"Splitted into {len(coords)} polygons")
+
+    return polygons
