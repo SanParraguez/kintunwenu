@@ -10,7 +10,6 @@ Submodule that contains the functions for regridding.
 __all__ = [
     'get_corners_from_coordinates',
     'get_coords_from_polygons',
-    # 'shift_polygon_lon',
     'intersects_meridian',
     'create_meridian',
     'split_polygon_at_line',
@@ -19,9 +18,9 @@ __all__ = [
 
 # === IMPORTS =========================================================
 import numpy as np
+import pandas as pd
 import shapely
 from shapely.ops import split
-from multiprocessing.pool import ThreadPool, Pool
 
 # =================================================================================
 
@@ -91,26 +90,6 @@ def get_coords_from_polygons(polygons):
     coords, indices = shapely.get_coordinates(polygons, return_index=True)
 
     return np.split(coords, np.where(indices[1:] != indices[:-1])[0] + 1)
-
-# =================================================================================
-
-# def shift_polygon_lon(polygons, degrees=180):
-#     """
-#     Shifts all longitude negative points in a Polygon object by 180.
-#     Just meant to deal with the antimeridian problem.
-#
-#     Parameters
-#     ----------
-#     polygons : shapely.geometry.Polygon or np.ndarray or pd.Series
-#         The Polygon object to be shifted.
-#     degrees :
-#
-#     Returns
-#     -------
-#     shapely.geometry.Polygon
-#         The shifted Polygon object.
-#     """
-#     return shapely.transform(polygons, lambda x: x + (degrees, 0))
 
 # =================================================================================
 
@@ -212,46 +191,81 @@ def is_over_pole(polygon, geod):
 # =================================================================================
 
 def split_anomaly_polygons(polygons, data=None, verbose=1):
-    """Splits polygons that cross the anomaly of 180 == -180.
+    """Splits polygons that cross the antimeridian (180 degrees longitude).
 
     Parameters
     ----------
-    polygons : np.ndarray
+    polygons : np.ndarray or pd.Series
+        Array of shapely.geometry.Polygon objects to split.
     data : np.ndarray, optional
-        Data to carry with the polygons.
+        Array of data to carry with the polygons. Default is None.
     verbose : int, optional
-        Verbosity level (default is 1).
+        Verbosity level. If greater than 0, print the number of polygons split. Default is 1.
 
     Returns
     -------
     list of shapely.geometry.Polygon or tuple of list and numpy.ma.array
-        The list of the new polygons (and the masked data array, if input data was not None).
+        List of the new polygons if input data was None.
+        Tuple of the new polygons and the masked data array if input data was not None.
     """
-    # ToDo: finish implementation
+    if isinstance(polygons, pd.Series):
+        polygons = polygons.to_numpy()
+    if isinstance(data, pd.Series):
+        data = data.to_numpy()
+
     antimeridian = create_meridian(180.)
     coords = get_coords_from_polygons(polygons)
+    new_data = None
 
     try:
         coords = np.array(coords, dtype=np.float64)
     except ValueError:
-        raise ValueError('Polygons must have the same amount of corners.')
+        pass
 
-    # Get weirdly long polygons
-    anomaly = (coords[:, :, 0].max(axis=1) - coords[:, :, 0].min(axis=1)) > 180
+    if isinstance(coords, np.ndarray):
+        # Get weirdly long polygons
+        anomaly = (coords[:, :, 0].max(axis=1) - coords[:, :, 0].min(axis=1)) > 180
 
-    new_coords = coords[anomaly]
-    new_coords[:, :, 0][new_coords[:, :, 0] < 0] += 360
-    new_polygons = shapely.polygons(new_coords)
-    new_polygons = new_polygons[shapely.intersects(new_polygons, antimeridian)]
-    new_polygons = np.array([split_polygon_at_line(poly, antimeridian) for poly in new_polygons])
+        if not anomaly.any():
+            return (polygons, data) if data is not None else polygons
 
-    # new_polygons = polygons[anomaly]
-    # new_coords = coords[anomaly]
-    # polygons = polygons[~anomaly]
-    # new_coords[:, :, 0][new_coords[:, :, 0] < 0] += 360
-    # new_polygons_2 = shapely.get_rings(shapely.polygons(new_coords))
+        if data is not None:
+            old_polygons, old_data = polygons[~anomaly], data[~anomaly]
+            coords, data = coords[anomaly], data[anomaly]
+        else:
+            old_polygons, coords = polygons[~anomaly], coords[anomaly]
+            old_data = None
+
+        # Create new polygons shifted by 360
+        coords[:, :, 0][coords[:, :, 0] < 0] += 360
+        polygons = shapely.polygons(coords)
+
+        polygons = polygons[shapely.intersects(polygons, antimeridian)]     # Just make sure that intersects
+        new_polygons = [split_polygon_at_line(poly, antimeridian) for poly in polygons]     # Split new polygons
+        new_coords = get_coords_from_polygons(new_polygons)     # Get coordinates to shift again
+
+        # Shift coordinates backwards again
+        try:
+            new_coords = np.array(new_coords)
+            new_coords[(new_coords[:, :, 0] > 180.).any(axis=1), :, 0] -= 360.
+        except ValueError:
+            for new_coord in new_coords:
+                if (new_coord[:, 0] > 180.).any():
+                    new_coord[:, 0] -= 360
+
+        if data is not None:
+            repeat_index = [len(sub_list) for sub_list in new_polygons]
+            new_data = np.repeat(data, repeat_index)
+
+        new_polygons = shapely.polygons(new_coords)
+
+    else:
+        raise NotImplementedError('Support for lists will be implemented')
 
     if verbose > 0:
-        print(f"Splitted into {len(coords)} polygons")
+        print(f"Splitted into {len(old_polygons)+len(new_polygons)} polygons")
 
-    return polygons
+    if data is not None:
+        return np.concatenate([old_polygons, new_polygons]), np.concatenate([old_data, new_data])
+    else:
+        return np.concatenate([old_polygons, new_polygons])

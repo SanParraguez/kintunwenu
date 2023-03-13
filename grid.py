@@ -18,6 +18,7 @@ import pandas as pd
 import shapely
 from pyproj import Geod
 from .geodata import create_geo_grid
+from multiprocessing import Pool
 
 # =================================================================================
 
@@ -27,7 +28,7 @@ def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=No
 
     Parameters
     ----------
-    polygons : list or pd.Series pr np.ndarray of Polygon, len (n)
+    polygons : list or pd.Series or np.ndarray of Polygon, len (n)
         The n polygons to be regridded.
     values : list or pd.Series pr np.ndarray, shape (n,)
         The values of each polygon.
@@ -77,13 +78,13 @@ def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=No
     df_inter['polygon'] = shapely.intersection(
         df_grid.loc[inters[1], 'polygon'],
         polygons.take(inters[0])
-    )
+    )       # This operation takes time, could be parallelized
     df_inter['value'] = values.take(inters[0])
 
     # Calculate intersection areas
     df_inter['inter_area'] = df_inter['polygon'].map(
         lambda poly: - geod.geometry_area_perimeter(poly)[0]
-    )
+    )       # This operation takes time, could be parallelized
     # Drop negative areas, undesired behaviour you will have
     df_inter = df_inter[df_inter['inter_area'] > 0.0]
 
@@ -96,7 +97,6 @@ def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=No
     # Filter if min_fill
     if min_fill is not None:
         df_inter = df_inter[df_inter['frac_area'] > min_fill]
-
     df_grid['value'] = df_inter['weight'] / df_inter['frac_area']
 
     # Reshape to grid and mask
@@ -135,3 +135,16 @@ def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90)):
     grid_lat = np.linspace(*lat_lim, num=nlat + 1, endpoint=True)
 
     return grid_lon, grid_lat
+
+# =================================================================================
+
+# def get_intersection_area(a, b, workers=None):
+#
+#     if workers is None:
+#         intersections = shapely.intersection(a, b)
+#     else:
+#         chunksize = 1 + len(a)//workers
+#         with Pool(processes=workers) as pool:
+#             intersections = pool.starmap(shapely.intersection, zip(a, b), chunksize=chunksize)
+#
+#     return intersections

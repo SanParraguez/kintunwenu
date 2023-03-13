@@ -15,6 +15,7 @@ __all__ = [
 
 # ============= IMPORTS ===============================
 import numpy as np
+import pandas as pd
 import shapely
 from netCDF4 import Dataset
 from . import geodata
@@ -88,6 +89,7 @@ class Kalkutun:
         NotImplementedError
             If the sensor is not supported.
         """
+        # ToDo: properly close the file if an error arise
         if isinstance(dataset, str):
             # ToDo: improve handling of string
             try:
@@ -363,6 +365,12 @@ class GridCrafter:
 
         if self.lat_filter is not None:
             df_obs = geodata.filter_by_latitude(df_obs, lat_thresh=self.lat_filter)
+
+        df_obs = pd.DataFrame({
+                k: v for k, v in zip(
+                    ['polygon', 'value'],
+                    polygons.split_anomaly_polygons(df_obs['polygon'], df_obs['value']))
+        })
 
         if self.interpolation == 'weighted':
             regrid = grid.weighted_regrid(
