@@ -235,6 +235,7 @@ class Kalkutun:
                 - 'value': The data values associated with each polygon.
                 - 'polygon': The Shapely Polygon objects representing geographical polygons.
         """
+        # ToDo: implement parallelization
         polygons_list, data = self.get_polygons(return_data=True)
         df = geodata.create_geo_dataset(polygons_list, data)
         if drop_masked:
@@ -333,7 +334,7 @@ class GridCrafter:
         return self.regrid(*args, **kwargs)
 
     # -----------------------------------------------------------------------------
-    def regrid(self, product, qa_filter=None, drop_negatives=False):
+    def regrid(self, product, qa_filter=None, drop_negatives=False, **kwargs):
         """
 
         Parameters
@@ -346,6 +347,9 @@ class GridCrafter:
         -------
 
         """
+        threads = kwargs.pop('threads', None)
+        workers = kwargs.pop('workers', None)
+
         kprod = product.copy() if isinstance(product, Kalkutun) else Kalkutun(product)
 
         # ToDo: cut outside limits
@@ -358,7 +362,7 @@ class GridCrafter:
         elif self.qa_filter is not None:
             kprod.qa_filter(self.qa_filter, inplace=True)
 
-        df_obs = kprod.get_polygon_dataframe(drop_masked=True)
+        df_obs = kprod.get_polygon_dataframe(drop_masked=True)      # This is expensive, could be parallelized
 
         if drop_negatives is True:
             df_obs = df_obs[df_obs['value'] > 0.0]
@@ -375,7 +379,7 @@ class GridCrafter:
         if self.interpolation == 'weighted':
             regrid = grid.weighted_regrid(
                 df_obs['polygon'], df_obs['value'], self.lons, self.lats,
-                min_fill=self.min_fill, geod=self.geod
+                min_fill=self.min_fill, geod=self.geod, threads=threads, workers=workers
             )
         else:
             raise NotImplementedError('Interpolation type not implemented')

@@ -18,11 +18,11 @@ import pandas as pd
 import shapely
 from pyproj import Geod
 from .geodata import create_geo_grid
-from multiprocessing import Pool
+from multiprocessing.pool import Pool, ThreadPool
 
 # =================================================================================
 
-def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=None):
+def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=None, **kwargs):
     """
     Performs a weighted regridding of polygons into a given regular grid.
 
@@ -47,6 +47,9 @@ def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=No
     np.ndarray
         Regridded values with shape (i-1, j-1).
     """
+    threads = kwargs.pop('threads', None)
+    workers = kwargs.pop('workers', None)
+
     if type(polygons) == list:
         polygons = np.array(polygons)
     elif type(polygons) == pd.Series:
@@ -75,16 +78,17 @@ def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=No
 
     # Create GeoDataFrame with intersections
     df_inter = df_grid.loc[inters[1], 'area'].to_frame()
-    df_inter['polygon'] = shapely.intersection(
-        df_grid.loc[inters[1], 'polygon'],
-        polygons.take(inters[0])
-    )       # This operation takes time, could be parallelized
     df_inter['value'] = values.take(inters[0])
 
+    # Get intersection polygons
+    df_inter['polygon'] = get_intersections(
+        df_grid.loc[inters[1], 'polygon'].to_numpy(),
+        polygons.take(inters[0]),
+        threads=threads
+    )
     # Calculate intersection areas
-    df_inter['inter_area'] = df_inter['polygon'].map(
-        lambda poly: - geod.geometry_area_perimeter(poly)[0]
-    )       # This operation takes time, could be parallelized
+    df_inter['inter_area'] = get_areas(df_inter['polygon'], geod=geod, workers=workers)
+
     # Drop negative areas, undesired behaviour you will have
     df_inter = df_inter[df_inter['inter_area'] > 0.0]
 
@@ -137,14 +141,41 @@ def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90)):
     return grid_lon, grid_lat
 
 # =================================================================================
+# ToDo: in development
 
-# def get_intersection_area(a, b, workers=None):
-#
-#     if workers is None:
-#         intersections = shapely.intersection(a, b)
-#     else:
-#         chunksize = 1 + len(a)//workers
-#         with Pool(processes=workers) as pool:
-#             intersections = pool.starmap(shapely.intersection, zip(a, b), chunksize=chunksize)
-#
-#     return intersections
+from .utils import timeit
+from functools import partial
+
+@timeit
+def get_intersections(a, b, threads=None):
+
+    if threads is None:
+        intersections = shapely.intersection(a, b)
+    else:
+        chunksize = 1 + len(a)//threads
+        chunks = [(a[i*chunksize:(i+1)*chunksize], b[i*chunksize:(i+1)*chunksize]) for i in range(threads)]
+        with ThreadPool(processes=threads) as pool:
+            intersections = pool.starmap(shapely.intersection, chunks)
+            intersections = np.concatenate(intersections)
+
+    return intersections
+
+@timeit
+def get_areas(polys, geod=None, workers=None):
+
+    if geod is None:
+        geod = Geod('+a=6378137 +f=0.0033528106647475126')
+
+    if workers is None:
+        areas = polys.map(lambda poly: - geod.geometry_area_perimeter(poly)[0])
+    else:
+        chunksize = 1 + len(polys)//workers
+
+        with Pool(processes=workers) as pool:
+            areas = pool.map(partial(get_single_area, geod=geod),
+                             polys, chunksize=chunksize)
+
+    return areas
+
+def get_single_area(poli, geod):
+    return - geod.geometry_area_perimeter(poli)[0]
