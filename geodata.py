@@ -12,16 +12,21 @@ __all__ = [
     'create_geo_grid',
     'filter_over_pole',
     'filter_by_latitude',
-    'split_polygons_at_meridian'
+    'get_intersections',
+    'get_areas',
+    'get_area'
 ]
 
 # === IMPORTS =========================================================
 import numpy as np
 import pandas as pd
 import shapely
-from pyproj import CRS
+from functools import partial
+from multiprocessing.pool import Pool, ThreadPool
+from pyproj import CRS, Geod
 from shapely.geometry import Polygon
-from .polygons import is_over_pole, create_meridian, get_corners_from_coordinates
+from .polygons import is_over_pole, get_corners_from_coordinates
+from .utils import timeit
 
 # =================================================================================
 
@@ -164,3 +169,82 @@ def filter_by_latitude(df, lat_thresh):
     return df
 
 # =================================================================================
+
+def get_intersections(a, b, threads=None):
+    """
+
+    Parameters
+    ----------
+    a : np.ndarray
+    b : np.ndarray
+    threads : int
+
+    Returns
+    -------
+
+    """
+    if threads is None:
+        intersections = shapely.intersection(a, b)
+    else:
+        chunksize = 1 + len(a)//threads
+        chunks = [(a[i*chunksize:(i+1)*chunksize], b[i*chunksize:(i+1)*chunksize]) for i in range(threads)]
+        with ThreadPool(processes=threads) as pool:
+            intersections = pool.starmap(shapely.intersection, chunks)
+            intersections = np.concatenate(intersections)
+
+    return intersections
+
+# =================================================================================
+
+def get_areas(polys, geod=None, workers=None):
+    """
+    Computes the area of each polygon in a Pandas Series of Shapely polygons using either a single process or multiple
+    processes.
+
+    Parameters
+    ----------
+    polys : pd.Series of shapely.geometry.Polygon
+        Series of input polygons.
+    geod : pyproj.Geod, optional
+        Geodetic calculator object, defaults to None (i.e., use the WGS84 ellipsoid).
+    workers : int, optional
+        Number of worker processes to use for parallel processing, defaults to None (i.e., single-process mode).
+
+    Returns
+    -------
+    pd.Series of float
+        Series of polygon areas.
+    """
+    if geod is None:
+        # Default to WGS84 ellipsoid: proj = '+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
+        geod = Geod('+a=6378137 +f=0.0033528106647475126')
+
+    if workers is None:
+        areas = polys.map(partial(get_area, geod=geod))
+    else:
+        chunksize = 1 + len(polys)//workers
+        with Pool(processes=workers) as pool:
+            areas = pool.map(partial(get_area, geod=geod),
+                             polys, chunksize=chunksize)
+
+    return pd.Series(areas, index=polys.index)
+
+# =================================================================================
+
+def get_area(polygon, geod):
+    """
+    Computes the area of a single Shapely polygon using the given geodetic calculator object.
+
+    Parameters
+    ----------
+    polygon : shapely.geometry.Polygon
+        Input polygon.
+    geod : pyproj.Geod
+        Geodetic calculator object.
+
+    Returns
+    -------
+    float
+        Area of the polygon.
+    """
+    return geod.geometry_area_perimeter(polygon)[0]

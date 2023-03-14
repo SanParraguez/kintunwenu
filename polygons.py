@@ -197,7 +197,7 @@ def split_anomaly_polygons(polygons, data=None, verbose=1):
     ----------
     polygons : np.ndarray or pd.Series
         Array of shapely.geometry.Polygon objects to split.
-    data : np.ndarray, optional
+    data : np.ndarray or pd.Series, optional
         Array of data to carry with the polygons. Default is None.
     verbose : int, optional
         Verbosity level. If greater than 0, print the number of polygons split. Default is 1.
@@ -241,8 +241,8 @@ def split_anomaly_polygons(polygons, data=None, verbose=1):
         polygons = shapely.polygons(coords)
 
         polygons = polygons[shapely.intersects(polygons, antimeridian)]     # Just make sure that intersects
-        new_polygons = [split_polygon_at_line(poly, antimeridian) for poly in polygons]     # Split new polygons
-        new_coords = get_coords_from_polygons(new_polygons)     # Get coordinates to shift again
+        polygons = [split_polygon_at_line(poly, antimeridian) for poly in polygons]     # Split new polygons
+        new_coords = get_coords_from_polygons(polygons)     # Get coordinates to shift again
 
         # Shift coordinates backwards again
         try:
@@ -254,18 +254,18 @@ def split_anomaly_polygons(polygons, data=None, verbose=1):
                     new_coord[:, 0] -= 360
 
         if data is not None:
-            repeat_index = [len(sub_list) for sub_list in new_polygons]
-            new_data = np.repeat(data, repeat_index)
+            repeat_index = list(map(len, polygons))
+            new_data = np.concatenate([np.tile(d, (n, 1)) for d, n in zip(data, repeat_index)], axis=0)
 
-        new_polygons = shapely.polygons(new_coords)
+        polygons = shapely.polygons(new_coords)
 
     else:
         raise NotImplementedError('Support for lists will be implemented')
 
     if verbose > 0:
-        print(f"Splitted into {len(old_polygons)+len(new_polygons)} polygons")
+        print(f"Splitted into {len(old_polygons)+len(polygons)} polygons")
 
     if data is not None:
-        return np.concatenate([old_polygons, new_polygons]), np.concatenate([old_data, new_data])
+        return np.concatenate([old_polygons, polygons]), np.concatenate([old_data, new_data])
     else:
-        return np.concatenate([old_polygons, new_polygons])
+        return np.concatenate([old_polygons, polygons])
