@@ -27,8 +27,7 @@ from . import plot
 from . import polygons
 from . import scrap
 from . import utils
-from . import smoothn
 from .kalkutun import Kalkutun, GridCrafter
 
-# print("KintunWenu {version} ({release})".format(version=__version__, release=__release__))
+print("KintunWenu {version} ({release})".format(version=__version__, release=__release__))
 # KINTUN WENU: from Mapuzungún, means "Search in the sky"
