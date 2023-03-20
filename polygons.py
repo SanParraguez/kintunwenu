@@ -33,9 +33,9 @@ def get_corners_from_coordinates(longitude, latitude, mode='center'):
     Parameters
     ----------
     latitude : np.ndarray
-        2D array (n,m) with center latitudes of a grid
+        2D array (n,m) with either center or corner latitudes of a grid
     longitude : np.ndarray
-        2D array (n,m) with center longitudes of a grid
+        2D array (n,m) with either center or corner longitudes of a grid
     mode : str
         Indicates if the points given are 'center' or 'corner' of grid cell.
 
@@ -46,26 +46,29 @@ def get_corners_from_coordinates(longitude, latitude, mode='center'):
     """
     mode = mode.lower()
     if mode in ['center', 'centers']:
-        # Calculate the midpoints of the grid cells
-        lon_mid = (longitude[:-1, :-1] + longitude[1:, 1:]) / 2
-        lat_mid = (latitude[:-1, :-1] + latitude[1:, 1:]) / 2
+        # Calculate the corners of the grid cells
+        # ToDo: This breaks when crossing the antimeridian, has to be solved by shifting points twice or by
+        #   directly splitting the polygons here. Be careful with the Poles.
+        lon_corners = (longitude[:-1, :-1] + longitude[1:, 1:] + longitude[1:, :-1] + longitude[:-1, 1:]) / 4
+        lat_corners = (latitude[:-1, :-1] + latitude[1:, 1:] + latitude[1:, :-1] + latitude[:-1, 1:]) / 4
     elif mode in ['corner', 'corners']:
-        lon_mid = longitude
-        lat_mid = latitude
+        lon_corners = longitude
+        lat_corners = latitude
     else:
         raise ValueError(f'Mode {mode} not recognized')
 
     # Create arrays of the corner coordinates for each rectangle
     # by stacking the midpoints of adjacent grid cells
-    nw_corner = np.stack((lon_mid[:-1, :-1], lat_mid[:-1, :-1]), axis=-1)
-    ne_corner = np.stack((lon_mid[:-1, 1:], lat_mid[:-1, 1:]), axis=-1)
-    se_corner = np.stack((lon_mid[1:, 1:], lat_mid[1:, 1:]), axis=-1)
-    sw_corner = np.stack((lon_mid[1:, :-1], lat_mid[1:, :-1]), axis=-1)
+    nw_corner = np.stack((lon_corners[:-1, :-1], lat_corners[:-1, :-1]))
+    ne_corner = np.stack((lon_corners[:-1, 1:], lat_corners[:-1, 1:]))
+    se_corner = np.stack((lon_corners[1:, 1:], lat_corners[1:, 1:]))
+    sw_corner = np.stack((lon_corners[1:, :-1], lat_corners[1:, :-1]))
 
     # Combine the corner arrays into a single array
-    corners = np.stack((nw_corner, ne_corner, se_corner, sw_corner), axis=-1)
+    corners = np.stack((nw_corner, ne_corner, se_corner, sw_corner))
+    corners = np.moveaxis(corners.reshape((4, 2, -1)), -1, 0)
 
-    return np.moveaxis(corners.reshape((-1, 2, 4)), 1, -1)
+    return corners
 
 # =================================================================================
 
@@ -173,7 +176,7 @@ def is_over_pole(polygon, geod):
     # Determine the azimuths between consecutive vertices of the polygon
     azimuths = np.array(geod.inv(lons[:-1], lats[:-1], lons[1:], lats[1:]))[:2]
 
-    # Adjust the azimuths to be relative to North
+    # Adjust the azimuths to the desired direction
     azimuths[1] += 180
     azimuths[azimuths > 180] -= 360
 
@@ -184,6 +187,7 @@ def is_over_pole(polygon, geod):
     # Determine the difference in azimuth between consecutive edges of the polygon
     diff = azimuths[1:] - azimuths[:-1]
     diff[diff > 180] -= 360
+    diff[diff < -180] += 360
 
     # If the sum of the azimuth differences is zero, the polygon crosses over the pole
     return diff.sum() == 0.0
@@ -237,21 +241,21 @@ def split_anomaly_polygons(polygons, data=None, verbose=1):
             old_data = None
 
         # Create new polygons shifted by 360
-        coords[:, :, 0][coords[:, :, 0] < 0] += 360
+        coords[:, :, 0][coords[:, :, 0] < 0] += 360.
         polygons = shapely.polygons(coords)
 
         polygons = polygons[shapely.intersects(polygons, antimeridian)]     # Just make sure that intersects
         polygons = [split_polygon_at_line(poly, antimeridian) for poly in polygons]     # Split new polygons
-        new_coords = get_coords_from_polygons(polygons)     # Get coordinates to shift again
+        new_coords = get_coords_from_polygons(polygons)                     # Get coordinates to shift again
 
         # Shift coordinates backwards again
         try:
-            new_coords = np.array(new_coords)
+            new_coords = np.array(new_coords, dtype=np.float64)
             new_coords[(new_coords[:, :, 0] > 180.).any(axis=1), :, 0] -= 360.
         except ValueError:
             for new_coord in new_coords:
                 if (new_coord[:, 0] > 180.).any():
-                    new_coord[:, 0] -= 360
+                    new_coord[:, 0] -= 360.
 
         if data is not None:
             repeat_index = list(map(len, polygons))
