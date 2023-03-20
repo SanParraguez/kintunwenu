@@ -26,7 +26,6 @@ from multiprocessing.pool import Pool, ThreadPool
 from pyproj import CRS, Geod
 from shapely.geometry import Polygon
 from .polygons import is_over_pole, get_corners_from_coordinates
-from .utils import timeit
 
 # =================================================================================
 
@@ -172,25 +171,49 @@ def filter_by_latitude(df, lat_thresh):
 
 def get_intersections(a, b, threads=None):
     """
+    Compute the intersections between geometries contained in two arrays.
 
     Parameters
     ----------
-    a : np.ndarray
-    b : np.ndarray
-    threads : int
+    a : np.ndarray or pd.Series or list or tuple or shapely.geometry.Geometry
+        First array of geometries
+    b : np.ndarray or pd.Series or list or tuple or shapely.geometry.Geometry
+        Second array of geometries
+    threads : int, optional
+        The number of threads to use for parallel processing.
+        If not provided or set to None, the computation will be performed sequentially.
 
     Returns
     -------
-
+    np.ndarray or pd.Series
+        The intersections between the two arrays or LineStrings.
     """
+    # Convert to arrays
+    a = np.array([a]) if isinstance(a, shapely.Geometry) else a
+    b = np.array([b]) if isinstance(b, shapely.Geometry) else b
+    a = np.array(a) if isinstance(a, (list, tuple)) else a
+    b = np.array(b) if isinstance(b, (list, tuple)) else b
+
+    if type(a) != type(b):
+        # Raise warning if different types of objects are passed
+        raise TypeError(f'Unexpected behavior could arise when indexing different type of objects [{type(a)}, {type(b)}]')
+
     if threads is None:
         intersections = shapely.intersection(a, b)
+
     else:
-        chunksize = 1 + len(a)//threads
-        chunks = [(a[i*chunksize:(i+1)*chunksize], b[i*chunksize:(i+1)*chunksize]) for i in range(threads)]
+        chunksize = 1 + len(a) // threads
+        if isinstance(a, pd.Series) and isinstance(b, pd.Series):
+            chunks = [(a.iloc[i * chunksize:(i + 1) * chunksize], b.iloc[i * chunksize:(i + 1) * chunksize]) for i in
+                      range(threads)]
+        else:
+            chunks = [(a[i * chunksize:(i + 1) * chunksize], b[i * chunksize:(i + 1) * chunksize]) for i in
+                      range(threads)]
+
         with ThreadPool(processes=threads) as pool:
             intersections = pool.starmap(shapely.intersection, chunks)
-            intersections = np.concatenate(intersections)
+
+        intersections = pd.concat(intersections) if isinstance(a, pd.Series) else np.concatenate(intersections)
 
     return intersections
 
