@@ -24,10 +24,10 @@ __all__ = [
 from . import geodata
 from . import grid
 from . import plot
-from . import polygons
 from . import scrap
 from . import utils
 from .kalkutun import Kalkutun, GridCrafter
+from .polygons import get_corners_from_coordinates, get_coordinates_from_polygons
 
 print("KintunWenu {version} ({release})".format(version=__version__, release=__release__))
 # KINTUN WENU: from Mapuzungún, means "Search in the sky"

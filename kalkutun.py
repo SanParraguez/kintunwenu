@@ -18,11 +18,13 @@ import numpy as np
 import pandas as pd
 import shapely
 from netCDF4 import Dataset
-from . import geodata
-from . import grid
-from . import utils
-from . import polygons
-from . import scrap
+from shapely.ops import split
+from .geodata import create_geo_dataset, filter_by_latitude
+from .grid import create_grid, weighted_regrid
+from .polygons import get_corners_from_coordinates, create_meridian, is_over_pole
+from .polygons import split_anomaly_polygons, get_coordinates_from_polygons
+from .scrap import download_ncfile
+from .units import standardise_unit_string, convert_units
 
 # =================================================================================
 
@@ -34,8 +36,8 @@ class Kalkutun:
         - S5P_OFFL_L2__NO2
         - S5P_RPRO_L2__NO2
 
-    The class provides an interface to easily access and manipulate the product data. It also includes methods to convert
-    units, retrieve polygon data, and create a dataframe of the polygon data.
+    The class provides an interface to easily access and manipulate the product data. It also includes methods to
+    convert units, retrieve polygon data, and create a dataframe of the polygon data.
 
     Kalkutun: from Mapuzungún, means "Do witchcraft"
 
@@ -57,7 +59,7 @@ class Kalkutun:
     Methods
     -------
     __init__(self, dataset)
-        Initializes the Kalkuntun object.
+        Initializes the Kalkutun object.
 
     get_polygons(self, return_data=True)
         Returns a list of Polygon objects created from the product's longitude and latitude.
@@ -95,9 +97,9 @@ class Kalkutun:
             try:
                 dataset = Dataset(dataset)
             except OSError:
-                dataset = scrap.download_ncfile(dataset)
+                dataset = download_ncfile(dataset)
         elif isinstance(dataset, Kalkutun):
-            # ToDo: handle dataset to be Kalkutun
+            # ToDo: handle case of Kalkutun given
             raise NotImplementedError('Kalkutun must be created from a path to file, an url or an actual Dataset')
 
         # Attempt to retrieve sensor information from product
@@ -132,7 +134,7 @@ class Kalkutun:
             for key, value in variables.items():
                 if key.lower().endswith('_column'):
                     attrs.update({'data': value[:].squeeze(),
-                                  'units': utils.standardise_unit_string(value.units),
+                                  'units': standardise_unit_string(value.units),
                                   'product': key})
                 elif key in var_names:
                     # Here we are assuming that the 'time' dimension is 1
@@ -146,7 +148,24 @@ class Kalkutun:
             raise NotImplementedError('Sensor has not been implemented.')
 
     # -----------------------------------------------------------------------------
+    def max(self, *args, **kwargs):
+        """This property returns the maximum value of the data array."""
+        return self.data.max(*args, **kwargs)
+
+    def min(self, *args, **kwargs):
+        """This property returns the minimum value of the data array."""
+        return self.data.min(*args, **kwargs)
+
+    @property
+    def shape(self):
+        """This property returns the shape of the data array."""
+        return self.data.shape
+
+    # -----------------------------------------------------------------------------
     def __eq__(self, other):
+        """
+        Compare if self is equal to another object by checking all its variables.
+        """
         if isinstance(other, Kalkutun):
             for my_key, other_key in zip(self.__dict__, other.__dict__):
                 if my_key == other_key:
@@ -169,7 +188,7 @@ class Kalkutun:
 
         Returns
         -------
-        Kalkuntun
+        Kalkutun
             A new instance of the current object.
         """
         new_object = self.__class__.__new__(self.__class__)
@@ -178,21 +197,7 @@ class Kalkutun:
         return new_object
 
     # -----------------------------------------------------------------------------
-    def max(self, *args, **kwargs):
-        """This property returns the maximum value of the data array as a float32."""
-        return self.data.max(*args, **kwargs)
-
-    def min(self, *args, **kwargs):
-        """This property returns the minimum value of the data array as a float32."""
-        return self.data.min(*args, **kwargs)
-
-    @property
-    def shape(self):
-        """This property returns the shape of the data array as a float32."""
-        return self.data.shape
-
-    # -----------------------------------------------------------------------------
-    def get_polygons(self, return_data=True):
+    def get_polygons(self, return_data=True, split_antimeridian=True):
         """
         Returns a list of Polygon objects created from the product's longitude and latitude.
 
@@ -200,6 +205,8 @@ class Kalkutun:
         ----------
         return_data : bool, optional
             Indicates whether to return the corresponding data. Defaults to True.
+        split_antimeridian : bool, optional
+            Indicates if polygons that cross the antimeridian should be split or returned as a single polygon.
 
         Returns
         -------
@@ -207,18 +214,58 @@ class Kalkutun:
             A list of Polygon objects created from the product's longitude and latitude. If `return_data`
             is True, it also returns a tuple containing the Polygon objects and the corresponding data.
         """
+        # ToDo: implement parallelization
         mode = 'centers' if self.data.shape == self.longitude.shape else 'corners'
-        corners = polygons.get_corners_from_coordinates(self.longitude, self.latitude, mode=mode)
-        polygons_list = shapely.polygons(corners)
 
-        if return_data is True:
+        coords = get_corners_from_coordinates(self.longitude, self.latitude, mode=mode)
+
+        if split_antimeridian:
+
+            cross_antimeridian = (coords[..., 0].max(axis=-1) - coords[..., 0].min(axis=-1)) > 180
+
+            if cross_antimeridian.any():
+
+                antimeridian = create_meridian(180.)
+
+                coords, new_coords = coords[~cross_antimeridian], coords[cross_antimeridian]
+                new_coords[..., 0][new_coords[..., 0] < 0] += 360
+                polygons, new_polygons = shapely.polygons(coords), shapely.polygons(new_coords)
+
+                new_polygons = [split(poly, antimeridian) for poly in new_polygons]
+                repeat_index = [len(poly.geoms) for poly in new_polygons] if return_data else None
+
+                new_coords = get_coordinates_from_polygons(np.concatenate([list(poly.geoms) for poly in new_polygons]))
+
+                try:
+                    new_coords = np.array(new_coords, dtype=np.float64)
+                    new_coords[(new_coords[:, :, 0] > 180).any(axis=1), :, 0] -= 360.
+                    new_polygons = shapely.polygons(new_coords)
+                except ValueError:
+                    # new_coords = np.array(new_coords, dtype=object)
+                    for new_coord in new_coords:
+                        if (new_coord[:, 0] > 180).any():
+                            new_coord[:, 0] -= 360
+
+                    new_polygons = np.array([shapely.polygons(new_coord) for new_coord in new_coords])
+
+                if return_data:
+                    data = self.data[1:-1, 1:-1].flatten() if mode == 'centers' else self.data.flatten()
+                    data, new_data = data[~cross_antimeridian], data[cross_antimeridian]
+                    new_data = np.ma.concatenate([np.tile(d, n) for d, n in zip(new_data, repeat_index)])
+                    return np.concatenate([polygons, new_polygons]), np.ma.concatenate([data, new_data])
+                else:
+                    return np.concatenate([polygons, new_polygons])
+
+        polygons = shapely.polygons(coords)
+
+        if return_data:
             data = self.data[1:-1, 1:-1].flatten() if mode == 'centers' else self.data.flatten()
-            return polygons_list, data
+            return polygons, data
         else:
-            return polygons_list
+            return polygons
 
     # -----------------------------------------------------------------------------
-    def get_polygon_dataframe(self, drop_masked=True):
+    def get_polygon_dataframe(self, drop_masked=True, split_antimeridian=True):
         """
         Generates a Geo-DataFrame from the object coordinates and data.
 
@@ -226,6 +273,8 @@ class Kalkutun:
         ----------
         drop_masked : bool, optional
             If True (default), drops any rows with masked values in the returned DataFrame.
+        split_antimeridian : bool, optional
+            Indicates if polygons that cross the antimeridian should be split or returned as a single polygon.
 
         Returns
         -------
@@ -235,13 +284,16 @@ class Kalkutun:
                 - 'value': The data values associated with each polygon.
                 - 'polygon': The Shapely Polygon objects representing geographical polygons.
         """
-        # ToDo: implement parallelization
-        polygons_list, data = self.get_polygons(return_data=True)
-        df = geodata.create_geo_dataset(polygons_list, data)
-        if drop_masked:
-            return df.loc[~data.mask]
-        else:
-            return df
+        polygons_array, data = self.get_polygons(return_data=True, split_antimeridian=split_antimeridian)
+        if drop_masked and np.ma.is_masked(data):
+            polygons_array, data = polygons_array[~data.mask], data[~data.mask]
+
+        # ToDo: Better check why we have non-valid polygons.
+        #   Kind of tricky to just drop non-valid ones.
+        # df = create_geo_dataset(polygons_array, data)
+        # return df[shapely.is_valid(df['polygon'])].reset_index()
+
+        return create_geo_dataset(polygons_array, data)
 
     # -----------------------------------------------------------------------------
     def convert_units(self, to_unit):
@@ -256,9 +308,8 @@ class Kalkutun:
         -------
         None
         """
-        to_unit = utils.standardise_unit_string(to_unit)
-        self.data = utils.convert_units(self.data, from_unit=self.units, to_unit=to_unit,
-                                        species=self.tracer)
+        to_unit = standardise_unit_string(to_unit)
+        self.data = convert_units(self.data, from_unit=self.units, to_unit=to_unit, species=self.tracer)
         self.units = to_unit
         return
 
@@ -327,7 +378,7 @@ class GridCrafter:
         self.lat_filter = kwargs.pop('lat_filter', None)
 
         # Create coordinate grids
-        self.lons, self.lats = grid.create_grid(resolution, coordinates[0:2], coordinates[2:4])
+        self.lons, self.lats = create_grid(resolution, coordinates[0:2], coordinates[2:4])
 
     # -----------------------------------------------------------------------------
     def __call__(self, *args, **kwargs):
@@ -366,18 +417,18 @@ class GridCrafter:
 
         if drop_negatives is True:
             df_obs = df_obs[df_obs['value'] > 0.0]
-
         if self.lat_filter is not None:
-            df_obs = geodata.filter_by_latitude(df_obs, lat_thresh=self.lat_filter)
-
+            df_obs = filter_by_latitude(df_obs, lat_thresh=self.lat_filter)
+        print(df_obs.iloc[561763])
+        print(is_over_pole(df_obs.iloc[561763]['polygon'], geod=self.geod))
         df_obs = pd.DataFrame({
                 k: v for k, v in zip(
                     ['polygon', 'value'],
-                    polygons.split_anomaly_polygons(df_obs['polygon'], df_obs['value']))
+                    split_anomaly_polygons(df_obs['polygon'], df_obs['value']))
         })
 
         if self.interpolation == 'weighted':
-            regrid = grid.weighted_regrid(
+            regrid = weighted_regrid(
                 df_obs['polygon'], df_obs['value'], self.lons, self.lats,
                 min_fill=self.min_fill, geod=self.geod, threads=threads, workers=workers
             )

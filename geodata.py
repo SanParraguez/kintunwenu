@@ -196,7 +196,8 @@ def get_intersections(a, b, threads=None):
 
     if type(a) != type(b):
         # Raise warning if different types of objects are passed
-        raise TypeError(f'Unexpected behavior could arise when indexing different type of objects [{type(a)}, {type(b)}]')
+        raise TypeError(f'Unexpected behavior could arise when indexing different type of objects '
+                        f'[{type(a)}, {type(b)}]')
 
     if threads is None:
         intersections = shapely.intersection(a, b)

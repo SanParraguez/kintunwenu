@@ -81,6 +81,7 @@ def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=No
         polygons.take(inters[0]),
         threads=threads
     )
+
     # Calculate intersection areas (intersections are 'inverted' so we multiply by -1)
     df_inter['inter_area'] = -1 * get_areas(df_inter['polygon'], geod=geod, workers=workers)
 

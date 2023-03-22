@@ -27,10 +27,10 @@ def read_links_file(path, dtype=None):
 
     Parameters
     ----------
-    path : str or list of str
+    path : str, Path or list
         Path(s) to one or more text files.
         If a directory path is provided, all text files in the directory will be read.
-    dtype : str or list of str, optional
+    dtype : str, Path or list, optional
         Types of files to accept, specified by their extensions (e.g., 'txt', 'csv').
         If specified, only links from files of the specified types will be returned.
         All files are accepted by default (None).
@@ -41,7 +41,7 @@ def read_links_file(path, dtype=None):
         List of links contained in the text files.
     """
     # Ensure path is iterable
-    if isinstance(path, str):
+    if isinstance(path, (str, Path)):
         path = [path]
 
     links = []
