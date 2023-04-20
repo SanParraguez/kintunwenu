@@ -17,7 +17,6 @@ __all__ = [
 ]
 
 # === IMPORTS =========================================================
-
 import numpy as np
 import pandas as pd
 import shapely
@@ -138,59 +137,6 @@ def get_corners_from_grid(longitude, latitude, mode='center'):
 
 # =================================================================================
 
-# def cross_antimeridian(geometry):
-#     """
-#     Detects if a given geometry crosses the antimeridian (the 180-degree meridian).
-#
-#     Parameters
-#     ----------
-#     geometry : shapely.Geometry or np.ndarray or pd.Series or list
-#         A geometry object or an array-like object of geometries to check.
-#
-#     Returns
-#     -------
-#     list or np.ndarray
-#         An iterable indicating whether each geometry in the input list crosses the antimeridian.
-#         The output is a boolean array with the same length as the input geometry.
-#
-#     Notes
-#     -----
-#     The function checks whether the geometry crosses the antimeridian by measuring the distance between the maximum
-#     and minimum longitude coordinates of the geometry. If the difference is greater than 180 degrees, the geometry is
-#     considered to cross the antimeridian. This method breaks if a polygon is big enough to cover half the Earth.
-#
-#     This function supports different input types, including shapely.Geometry objects, numpy arrays, pandas Series, and
-#     lists.
-#     """
-#     if isinstance(geometry, np.ndarray):            # Case 0: Array [Polygon or list or ndarray]
-#         pass
-#     elif isinstance(geometry, shapely.Geometry):    # Case 1: Single Polygon
-#         geometry = np.array([geometry])
-#     elif isinstance(geometry, pd.Series):           # Case 2: Series [Polygon or list]
-#         geometry = geometry.to_numpy()
-#     elif isinstance(geometry, list):
-#         try:
-#             geometry = np.array(geometry, dtype=np.float64)     # Case 3: list with same dimensions
-#         except ValueError:
-#             pass                                                # Case 4: list with different dimensions
-#
-#     if isinstance(geometry[0], shapely.Geometry):
-#         geometry = get_coordinates_from_polygons(geometry)
-#
-#     try:
-#         geometry = np.array(geometry, dtype=np.float64)
-#     except ValueError:
-#         pass
-#
-#     if isinstance(geometry, np.ndarray):
-#         anomaly = (geometry[:, :, 0].max(axis=1) - geometry[:, :, 0].min(axis=1)) > 180
-#     else:
-#         anomaly = [(geom[:, 0].max() - geom[:, 0].min()) > 180 for geom in geometry]
-#
-#     return anomaly
-
-# =================================================================================
-
 def split_anomaly_polygons(polygons, data=None, verbose=1):
     """Splits polygons that cross the antimeridian (180 degrees longitude).
 
@@ -272,88 +218,6 @@ def split_anomaly_polygons(polygons, data=None, verbose=1):
         return np.concatenate([polygons, new_polygons]), np.concatenate([data, new_data])
     else:
         return np.concatenate([polygons, new_polygons])
-
-# =================================================================================
-
-# def split_anomaly_polygons_old(polygons, data=None, verbose=1):
-#     """Splits polygons that cross the antimeridian (180 degrees longitude).
-#
-#     Parameters
-#     ----------
-#     polygons : np.ndarray or pd.Series
-#         Array of shapely.geometry.Polygon objects to split.
-#     data : np.ndarray or pd.Series, optional
-#         Array of data to carry with the polygons. Default is None.
-#     verbose : int, optional
-#         Verbosity level. If greater than 0, print the number of polygons split. Default is 1.
-#
-#     Returns
-#     -------
-#     list of shapely.geometry.Polygon or tuple of list and numpy.ma.array
-#         List of the new polygons if input data was None.
-#         Tuple of the new polygons and the masked data array if input data was not None.
-#     """
-#     if isinstance(polygons, pd.Series):
-#         polygons = polygons.to_numpy()
-#     if isinstance(data, pd.Series):
-#         data = data.to_numpy()
-#
-#     antimeridian = create_meridian(180.)
-#     coords = get_coordinates_from_polygons(polygons)
-#     new_data = None
-#
-#     try:
-#         coords = np.array(coords, dtype=np.float64)
-#     except ValueError:
-#         pass
-#
-#     if isinstance(coords, np.ndarray):
-#         # Get weirdly long polygons
-#         anomaly = (coords[:, :, 0].max(axis=-1) - coords[:, :, 0].min(axis=-1)) > 180
-#
-#         if not anomaly.any():
-#             return (polygons, data) if data is not None else polygons
-#
-#         if data is not None:
-#             old_polygons, old_data = polygons[~anomaly], data[~anomaly]
-#             coords, data = coords[anomaly], data[anomaly]
-#         else:
-#             old_polygons, coords = polygons[~anomaly], coords[anomaly]
-#             old_data = None
-#
-#         # Create new polygons shifted by 360
-#         coords[:, :, 0][coords[:, :, 0] < 0] += 360.
-#         polygons = shapely.polygons(coords)
-#
-#         polygons = polygons[shapely.intersects(polygons, antimeridian)]     # Just make sure that intersects
-#         polygons = [split(poly, antimeridian) for poly in polygons]     # Split new polygons
-#         new_coords = get_coordinates_from_polygons(polygons)  # Get coordinates to shift again
-#
-#         # Shift coordinates backwards again
-#         try:
-#             new_coords = np.array(new_coords, dtype=np.float64)
-#             new_coords[(new_coords[:, :, 0] > 180.).any(axis=1), :, 0] -= 360.
-#         except ValueError:
-#             for new_coord in new_coords:
-#                 if (new_coord[:, 0] > 180.).any():
-#                     new_coord[:, 0] -= 360.
-#
-#         if data is not None:
-#             repeat_index = list(map(len, polygons))
-#             new_data = np.concatenate([np.tile(d, (n, 1)) for d, n in zip(data, repeat_index)], axis=0)
-#
-#         polygons = shapely.polygons(new_coords)
-#
-#     else:
-#         raise NotImplementedError('Support for lists will be implemented')
-#
-#     if verbose > 0:
-#         print(f"Split into {len(old_polygons)+len(polygons)} polygons")
-#
-#     if data is not None:
-#         return np.concatenate([old_polygons, polygons]), np.concatenate([old_data, new_data])
-#     else:
-#         return np.concatenate([old_polygons, polygons])
 
 # =================================================================================
 
