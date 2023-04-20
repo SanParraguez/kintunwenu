@@ -16,7 +16,8 @@ __all__ = [
 import numpy as np
 import pandas as pd
 import shapely
-from .geodata import create_geo_grid, get_intersections, get_areas
+from .geodata import get_intersections, get_areas
+from .polygons import get_corners_from_grid
 
 # =================================================================================
 
@@ -135,5 +136,57 @@ def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90)):
     grid_lat = np.linspace(*lat_lim, num=nlat + 1, endpoint=True)
 
     return grid_lon, grid_lat
+
+# =================================================================================
+
+def create_geo_grid(lons, lats, mode='corners'):
+    """
+    Generates a Geo-DataFrame containing a grid of polygons defined by the input latitude and longitude coordinates.
+
+    Parameters
+    ----------
+    lons : array-like
+        An array of longitude coordinates, in degrees.
+    lats : array-like
+        An array of latitude coordinates, in degrees.
+    mode : str, optional
+        Determines how the grid cells are defined. Defaults to 'corners', which creates cells with corners defined
+        by the input coordinates. Alternatively, 'centers' can be used to create cells with centers defined
+        by the input coordinates.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame containing the polygons of each cell and its index (xi, yi). The DataFrame has three columns:
+            - 'xi': The x index of the cell.
+            - 'yi': The y index of the cell.
+            - 'polygon': The Shapely Polygon object representing the cell.
+    """
+
+    lons = np.array(lons)
+    lats = np.array(lats)
+    if lons.ndim == 1 and lats.ndim == 1:
+        lons, lats = np.meshgrid(lons, lats, indexing='xy')
+    elif lons.ndim == 2 and lons.ndim == 2:
+        assert lons.shape == lats.shape
+    else:
+        raise ValueError(f"Arrays must have same dimensions {lons.shape} and {lats.shape}"
+                         f"not compatible.")
+
+    polys_grid = shapely.polygons(
+        get_corners_from_grid(lons, lats, mode=mode)
+    )
+
+    grid_shape = lons.shape
+    grid_xi = np.tile(np.arange(grid_shape[0] - 1), grid_shape[1] - 1)
+    grid_yi = np.arange(grid_shape[1] - 1).repeat(grid_shape[0] - 1)
+
+    df_grid = pd.DataFrame({
+        'xi': grid_xi,
+        'yi': grid_yi,
+        'polygon': polys_grid
+    })
+
+    return df_grid
 
 # =================================================================================

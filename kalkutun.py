@@ -15,14 +15,11 @@ __all__ = [
 
 # ============= IMPORTS ===============================
 import numpy as np
-import pandas as pd
 import shapely
 from netCDF4 import Dataset
-from shapely.ops import split
-from .geodata import create_geo_dataset, filter_by_latitude
+from .geodata import create_geo_dataset, are_over_pole
 from .grid import create_grid, weighted_regrid
-from .polygons import get_corners_from_coordinates, create_meridian, is_over_pole
-from .polygons import split_anomaly_polygons, get_coordinates_from_polygons
+from .polygons import get_corners_from_grid, split_anomaly_polygons
 from .scrap import download_ncfile
 from .units import standardise_unit_string, convert_units
 
@@ -61,14 +58,18 @@ class Kalkutun:
     __init__(self, dataset)
         Initializes the Kalkutun object.
 
+    copy(self, )
+
+    convert_units(self, to_unit)
+        Converts the units of the product data.
+
+    qa_filter(self, )
+
     get_polygons(self, return_data=True)
         Returns a list of Polygon objects created from the product's longitude and latitude.
 
     get_polygon_dataframe(self)
         Returns a Pandas dataframe containing the polygon data.
-
-    convert_units(self, to_unit)
-        Converts the units of the product data.
 
     Raises
     ------
@@ -91,16 +92,17 @@ class Kalkutun:
         NotImplementedError
             If the sensor is not supported.
         """
+        if isinstance(dataset, Kalkutun):
+            # ToDo: handle case of Kalkutun given
+            raise NotImplementedError('Kalkutun must be created from a path to file, an url or an actual Dataset')
+
         # ToDo: properly close the file if an error arise
-        if isinstance(dataset, str):
+        elif isinstance(dataset, str):
             # ToDo: improve handling of string
             try:
                 dataset = Dataset(dataset)
             except OSError:
                 dataset = download_ncfile(dataset)
-        elif isinstance(dataset, Kalkutun):
-            # ToDo: handle case of Kalkutun given
-            raise NotImplementedError('Kalkutun must be created from a path to file, an url or an actual Dataset')
 
         # Attempt to retrieve sensor information from product
         try:
@@ -117,6 +119,7 @@ class Kalkutun:
         self.data = None
         self.qa_value = None
 
+        # ---------- TROPOMI ----------
         if self.sensor in ['tropomi']:
 
             var_names = [
@@ -197,112 +200,14 @@ class Kalkutun:
         return new_object
 
     # -----------------------------------------------------------------------------
-    def get_polygons(self, return_data=True, split_antimeridian=True):
-        """
-        Returns a list of Polygon objects created from the product's longitude and latitude.
-
-        Parameters
-        ----------
-        return_data : bool, optional
-            Indicates whether to return the corresponding data. Defaults to True.
-        split_antimeridian : bool, optional
-            Indicates if polygons that cross the antimeridian should be split or returned as a single polygon.
-
-        Returns
-        -------
-        list[shapely.geometry.polygon.Polygon] or tuple[list, np.ndarray]
-            A list of Polygon objects created from the product's longitude and latitude. If `return_data`
-            is True, it also returns a tuple containing the Polygon objects and the corresponding data.
-        """
-        # ToDo: implement parallelization
-        mode = 'centers' if self.data.shape == self.longitude.shape else 'corners'
-
-        coords = get_corners_from_coordinates(self.longitude, self.latitude, mode=mode)
-
-        if split_antimeridian:
-
-            cross_antimeridian = (coords[..., 0].max(axis=-1) - coords[..., 0].min(axis=-1)) > 180
-
-            if cross_antimeridian.any():
-
-                antimeridian = create_meridian(180.)
-
-                coords, new_coords = coords[~cross_antimeridian], coords[cross_antimeridian]
-                new_coords[..., 0][new_coords[..., 0] < 0] += 360
-                polygons, new_polygons = shapely.polygons(coords), shapely.polygons(new_coords)
-
-                new_polygons = [split(poly, antimeridian) for poly in new_polygons]
-                repeat_index = [len(poly.geoms) for poly in new_polygons] if return_data else None
-
-                new_coords = get_coordinates_from_polygons(np.concatenate([list(poly.geoms) for poly in new_polygons]))
-
-                try:
-                    new_coords = np.array(new_coords, dtype=np.float64)
-                    new_coords[(new_coords[:, :, 0] > 180).any(axis=1), :, 0] -= 360.
-                    new_polygons = shapely.polygons(new_coords)
-                except ValueError:
-                    # new_coords = np.array(new_coords, dtype=object)
-                    for new_coord in new_coords:
-                        if (new_coord[:, 0] > 180).any():
-                            new_coord[:, 0] -= 360
-
-                    new_polygons = np.array([shapely.polygons(new_coord) for new_coord in new_coords])
-
-                if return_data:
-                    data = self.data[1:-1, 1:-1].flatten() if mode == 'centers' else self.data.flatten()
-                    data, new_data = data[~cross_antimeridian], data[cross_antimeridian]
-                    new_data = np.ma.concatenate([np.tile(d, n) for d, n in zip(new_data, repeat_index)])
-                    return np.concatenate([polygons, new_polygons]), np.ma.concatenate([data, new_data])
-                else:
-                    return np.concatenate([polygons, new_polygons])
-
-        polygons = shapely.polygons(coords)
-
-        if return_data:
-            data = self.data[1:-1, 1:-1].flatten() if mode == 'centers' else self.data.flatten()
-            return polygons, data
-        else:
-            return polygons
-
-    # -----------------------------------------------------------------------------
-    def get_polygon_dataframe(self, drop_masked=True, split_antimeridian=True):
-        """
-        Generates a Geo-DataFrame from the object coordinates and data.
-
-        Parameters
-        ----------
-        drop_masked : bool, optional
-            If True (default), drops any rows with masked values in the returned DataFrame.
-        split_antimeridian : bool, optional
-            Indicates if polygons that cross the antimeridian should be split or returned as a single polygon.
-
-        Returns
-        -------
-        pandas.DataFrame
-            A DataFrame containing the polygons of each cell and its actual value.
-            The DataFrame has two columns:
-                - 'value': The data values associated with each polygon.
-                - 'polygon': The Shapely Polygon objects representing geographical polygons.
-        """
-        polygons_array, data = self.get_polygons(return_data=True, split_antimeridian=split_antimeridian)
-        if drop_masked and np.ma.is_masked(data):
-            polygons_array, data = polygons_array[~data.mask], data[~data.mask]
-
-        # ToDo: Better check why we have non-valid polygons.
-        #   Kind of tricky to just drop non-valid ones.
-        # df = create_geo_dataset(polygons_array, data)
-        # return df[shapely.is_valid(df['polygon'])].reset_index()
-
-        return create_geo_dataset(polygons_array, data)
-
-    # -----------------------------------------------------------------------------
     def convert_units(self, to_unit):
         """
+        Change units of the product data.
 
         Parameters
         ----------
         to_unit : str
-            The desired new unit of the data
+            The desired new unit of the data.
 
         Returns
         -------
@@ -324,7 +229,7 @@ class Kalkutun:
             The minimum QA value to retain data.
         inplace : bool, optional
             If True, the function applies the masking operation on the data array in-place.
-            If False, the function returns a new masked array.
+            If False, the function returns a new masked array (default).
 
         Returns
         -------
@@ -335,6 +240,187 @@ class Kalkutun:
             self.data = np.ma.masked_where(self.qa_value < min_value, self.data)
         else:
             return np.ma.masked_where(self.qa_value < min_value, self.data)
+
+    # -----------------------------------------------------------------------------
+    def get_polygons(self, return_data=True):
+        """
+        Returns a list of Polygon objects created from the product's longitude and latitude.
+
+        Parameters
+        ----------
+        return_data : bool, optional
+            Indicates whether to return the corresponding data. Defaults to True.
+
+        Returns
+        -------
+        list[Polygon] or tuple[list, np.ndarray]
+            A list of Polygon objects created from the product's longitude and latitude. If `return_data`
+            is True, it also returns a tuple containing the Polygon objects and the corresponding data.
+        """
+        mode = 'centers' if self.data.shape == self.longitude.shape else 'corners'
+        coords = get_corners_from_grid(self.longitude, self.latitude, mode=mode)
+        polygons = shapely.polygons(coords)
+
+        if return_data:
+            data = self.data[1:-1, 1:-1].flatten() if mode == 'centers' else self.data.flatten()
+            return polygons, data
+        else:
+            return polygons
+
+    # -----------------------------------------------------------------------------
+    def get_polygon_dataframe(self, drop_masked=True, split_antimeridian=True,
+                              drop_invalid=True, drop_pole=True,
+                              workers=None, geod=None):
+        """
+        Generates a GeoDataFrame from the object coordinates and data.
+
+        Parameters
+        ----------
+        drop_masked : bool, optional
+            If True (default), drops any rows with masked values in the returned DataFrame.
+        split_antimeridian : bool, optional
+            If True (default), splits those polygons crossing the antimeridian.
+        drop_invalid : bool, optional
+            If True (default), drops all invalid geometries.
+        drop_pole : bool, optional
+            If True (default), drops all geometries over the poles.
+        workers : int, optional
+            The number of worker processes to use for parallelization when checking geometries over the poles.
+        geod : Geodesic, optional
+            A `Geodesic` object to use for the calculations when checking geometries over the poles.
+
+        Returns
+        -------
+        pandas.DataFrame
+            A DataFrame containing the polygons of each cell and its actual value.
+            The DataFrame has two columns:
+                - 'value': The data values associated with each polygon.
+                - 'polygon': The Shapely Polygon objects representing geographical polygons.
+        """
+        print("Retrieve polygons from dataset")
+        polygons_array, data = self.get_polygons(return_data=True)
+        print(f"  Created {len(polygons_array)} polygons")
+        if drop_masked and np.ma.is_masked(data):
+            polygons_array, data = polygons_array[~data.mask], data[~data.mask]
+            print(f"  Dropped masked to {len(polygons_array)} geometries")
+
+        df = create_geo_dataset(polygons_array, data)
+
+        if drop_invalid or drop_pole or split_antimeridian:
+            is_valid = shapely.is_valid(df['geometry'])
+            print(f"  Dropped {len(df)-is_valid.sum()} invalid geometries")
+            df = df[is_valid].reset_index(drop=True)
+
+        if drop_pole or split_antimeridian:
+            over_pole = are_over_pole(df['geometry'], geod=geod, workers=workers)
+            print(f"  Dropped {over_pole.sum()} geometries over poles")
+            df = df[~over_pole].reset_index(drop=True)
+
+        if split_antimeridian:
+            polygons_array, data = split_anomaly_polygons(df['geometry'], df['value'], verbose=0)
+            print(f"  Split into {len(polygons_array)} ({len(df)}) polygons")
+            df = create_geo_dataset(polygons_array, data)
+
+        return df
+
+    # -----------------------------------------------------------------------------
+    # def get_polygons_old(self, return_data=True, split_antimeridian=True):
+    #     """
+    #     Returns a list of Polygon objects created from the product's longitude and latitude.
+    #
+    #     Parameters
+    #     ----------
+    #     return_data : bool, optional
+    #         Indicates whether to return the corresponding data. Defaults to True.
+    #     split_antimeridian : bool, optional
+    #         Indicates if polygons that cross the antimeridian should be split or returned as a single polygon.
+    #
+    #     Returns
+    #     -------
+    #     list[Polygon] or tuple[list, np.ndarray]
+    #         A list of Polygon objects created from the product's longitude and latitude. If `return_data`
+    #         is True, it also returns a tuple containing the Polygon objects and the corresponding data.
+    #     """
+    #     # ToDo: implement parallelization
+    #     mode = 'centers' if self.data.shape == self.longitude.shape else 'corners'
+    #
+    #     coords = get_corners_from_grid(self.longitude, self.latitude, mode=mode)
+    #
+    #     if split_antimeridian:
+    #
+    #         cross_antimeridian = (coords[..., 0].max(axis=-1) - coords[..., 0].min(axis=-1)) > 180
+    #
+    #         if cross_antimeridian.any():
+    #
+    #             antimeridian = create_meridian(180.)
+    #
+    #             coords, new_coords = coords[~cross_antimeridian], coords[cross_antimeridian]
+    #             new_coords[..., 0][new_coords[..., 0] < 0] += 360
+    #             polygons, new_polygons = shapely.polygons(coords), shapely.polygons(new_coords)
+    #
+    #             new_polygons = [split(poly, antimeridian) for poly in new_polygons]
+    #             repeat_index = [len(poly.geoms) for poly in new_polygons] if return_data else None
+    #
+    #             new_coords = get_coordinates_from_polygons(np.concatenate([list(poly.geoms) for poly in new_polygons]))
+    #
+    #             try:
+    #                 new_coords = np.array(new_coords, dtype=np.float64)
+    #                 new_coords[(new_coords[:, :, 0] > 180).any(axis=1), :, 0] -= 360.
+    #                 new_polygons = shapely.polygons(new_coords)
+    #             except ValueError:
+    #                 # new_coords = np.array(new_coords, dtype=object)
+    #                 for new_coord in new_coords:
+    #                     if (new_coord[:, 0] > 180).any():
+    #                         new_coord[:, 0] -= 360
+    #
+    #                 new_polygons = np.array([shapely.polygons(new_coord) for new_coord in new_coords])
+    #
+    #             if return_data:
+    #                 data = self.data[1:-1, 1:-1].flatten() if mode == 'centers' else self.data.flatten()
+    #                 data, new_data = data[~cross_antimeridian], data[cross_antimeridian]
+    #                 new_data = np.ma.concatenate([np.tile(d, n) for d, n in zip(new_data, repeat_index)])
+    #                 return np.concatenate([polygons, new_polygons]), np.ma.concatenate([data, new_data])
+    #             else:
+    #                 return np.concatenate([polygons, new_polygons])
+    #
+    #     polygons = shapely.polygons(coords)
+    #
+    #     if return_data:
+    #         data = self.data[1:-1, 1:-1].flatten() if mode == 'centers' else self.data.flatten()
+    #         return polygons, data
+    #     else:
+    #         return polygons
+
+    # -----------------------------------------------------------------------------
+    # def get_polygon_dataframe_old(self, drop_masked=True, split_antimeridian=True):
+    #     """
+    #     Generates a Geo-DataFrame from the object coordinates and data.
+    #
+    #     Parameters
+    #     ----------
+    #     drop_masked : bool, optional
+    #         If True (default), drops any rows with masked values in the returned DataFrame.
+    #     split_antimeridian : bool, optional
+    #         Indicates if polygons that cross the antimeridian should be split or returned as a single polygon.
+    #
+    #     Returns
+    #     -------
+    #     pandas.DataFrame
+    #         A DataFrame containing the polygons of each cell and its actual value.
+    #         The DataFrame has two columns:
+    #             - 'value': The data values associated with each polygon.
+    #             - 'polygon': The Shapely Polygon objects representing geographical polygons.
+    #     """
+    #     polygons_array, data = self.get_polygons_old(return_data=True, split_antimeridian=split_antimeridian)
+    #     if drop_masked and np.ma.is_masked(data):
+    #         polygons_array, data = polygons_array[~data.mask], data[~data.mask]
+    #
+    #     # ToDo: Better check why we have non-valid polygons.
+    #     #   Kind of tricky to just drop non-valid ones.
+    #     # df = create_geo_dataset(polygons_array, data)
+    #     # return df[shapely.is_valid(df['polygon'])].reset_index()
+    #
+    #     return create_geo_dataset(polygons_array, data)
 
 # =================================================================================
 
@@ -375,7 +461,7 @@ class GridCrafter:
         self.units = kwargs.pop('units', None)
         self.geod = kwargs.pop('geod', None)
         self.qa_filter = kwargs.pop('qa_filter', None)
-        self.lat_filter = kwargs.pop('lat_filter', None)
+        # self.lat_filter = kwargs.pop('lat_filter', None)
 
         # Create coordinate grids
         self.lons, self.lats = create_grid(resolution, coordinates[0:2], coordinates[2:4])
@@ -387,16 +473,21 @@ class GridCrafter:
     # -----------------------------------------------------------------------------
     def regrid(self, product, qa_filter=None, drop_negatives=False, **kwargs):
         """
+        Perform a regridding over a product
 
         Parameters
         ----------
-        product
-        qa_filter
-        drop_negatives
+        product : Dataset or Kalkutun
+            Product to be regridded.
+        qa_filter : float, optional
+            Quality assurance filter to be applied.
+        drop_negatives : bool, optional
+            Indicates if negative values should be considered or not.
 
         Returns
         -------
-
+        np.ndarray
+            2D-array with the weighted values.
         """
         threads = kwargs.pop('threads', None)
         workers = kwargs.pop('workers', None)
@@ -413,23 +504,18 @@ class GridCrafter:
         elif self.qa_filter is not None:
             kprod.qa_filter(self.qa_filter, inplace=True)
 
-        df_obs = kprod.get_polygon_dataframe(drop_masked=True)      # This is expensive, could be parallelized
+        df_obs = kprod.get_polygon_dataframe(
+            drop_masked=True, drop_invalid=True, drop_pole=True, split_antimeridian=True
+        )      # This is expensive, specially when checking poles
 
         if drop_negatives is True:
             df_obs = df_obs[df_obs['value'] > 0.0]
-        if self.lat_filter is not None:
-            df_obs = filter_by_latitude(df_obs, lat_thresh=self.lat_filter)
-        print(df_obs.iloc[561763])
-        print(is_over_pole(df_obs.iloc[561763]['polygon'], geod=self.geod))
-        df_obs = pd.DataFrame({
-                k: v for k, v in zip(
-                    ['polygon', 'value'],
-                    split_anomaly_polygons(df_obs['polygon'], df_obs['value']))
-        })
+        # if self.lat_filter is not None:
+        #     df_obs = filter_by_latitude(df_obs, lat_thresh=self.lat_filter)
 
         if self.interpolation == 'weighted':
             regrid = weighted_regrid(
-                df_obs['polygon'], df_obs['value'], self.lons, self.lats,
+                df_obs['geometry'], df_obs['value'], self.lons, self.lats,
                 min_fill=self.min_fill, geod=self.geod, threads=threads, workers=workers
             )
         else:
