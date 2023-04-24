@@ -243,6 +243,50 @@ class Kalkutun:
             return np.ma.masked_where(self.qa_value < min_value, self.data)
 
     # -----------------------------------------------------------------------------
+    def coordinates_filter(self, *args, inplace=False, **kwargs):
+        """
+
+        Parameters
+        ----------
+        args
+        inplace
+        kwargs
+
+        Returns
+        -------
+
+        """
+        if len(args) in [1, 4]:
+            lon_min, lon_max, lat_min, lat_max = args
+        elif len(args) == 2:
+            (lon_min, lon_max), (lat_min, lat_max) = args
+        elif kwargs:
+            lon_min = kwargs.pop('lon_min', None)
+            lon_max = kwargs.pop('lon_max', None)
+            lat_min = kwargs.pop('lat_min', None)
+            lat_max = kwargs.pop('lat_max', None)
+        else:
+            raise ValueError('Coordinates limits should be provided by one or all together.')
+
+        new_data = self.data.copy()
+        if self.longitude.shape == self.data.shape:
+            if lon_min:
+                new_data = np.ma.masked_where(self.longitude < lon_min, new_data)
+            if lon_max:
+                new_data = np.ma.masked_where(self.longitude > lon_max, new_data)
+            if lat_min:
+                new_data = np.ma.masked_where(self.latitude < lat_min, new_data)
+            if lat_max:
+                new_data = np.ma.masked_where(self.latitude > lat_max, new_data)
+        else:
+            raise NotImplementedError('Filter not implemented for corner points, try filtering polygons.')
+
+        if inplace:
+            self.data = new_data
+        else:
+            return new_data
+
+    # -----------------------------------------------------------------------------
     def get_polygons(self, return_data=True):
         """
         Returns a list of Polygon objects created from the product's longitude and latitude.
@@ -269,8 +313,8 @@ class Kalkutun:
             return polygons
 
     # -----------------------------------------------------------------------------
-    def get_polygon_dataframe(self, drop_masked=True, split_antimeridian=True,
-                              drop_invalid=True, drop_pole=True,
+    def get_polygon_dataframe(self, drop_masked=True, drop_invalid=True, split_antimeridian=True,
+                              drop_poles=False,
                               workers=None, geod=None):
         """
         Generates a GeoDataFrame from the object coordinates and data.
@@ -279,12 +323,12 @@ class Kalkutun:
         ----------
         drop_masked : bool, optional
             If True (default), drops any rows with masked values in the returned DataFrame.
-        split_antimeridian : bool, optional
-            If True (default), splits those polygons crossing the antimeridian.
         drop_invalid : bool, optional
             If True (default), drops all invalid geometries.
-        drop_pole : bool, optional
-            If True (default), drops all geometries over the poles.
+        split_antimeridian : bool, optional
+            If True (default), splits those polygons crossing the antimeridian.
+        drop_poles : bool, optional
+            If True, drops all geometries over the poles.
         workers : int, optional
             The number of worker processes to use for parallelization when checking geometries over the poles.
         geod : Geodesic, optional
@@ -301,18 +345,19 @@ class Kalkutun:
         print("Retrieve polygons from dataset")
         polygons_array, data = self.get_polygons(return_data=True)
         print(f"  Created {len(polygons_array)} polygons")
+
         if drop_masked and np.ma.is_masked(data):
             polygons_array, data = polygons_array[~data.mask], data[~data.mask]
             print(f"  Dropped masked to {len(polygons_array)} geometries")
 
         df = create_geo_dataset(polygons_array, data)
 
-        if drop_invalid or drop_pole or split_antimeridian:
+        if drop_invalid or drop_poles or split_antimeridian:
             is_valid = shapely.is_valid(df['geometry'])
             print(f"  Dropped {len(df)-is_valid.sum()} invalid geometries")
             df = df[is_valid].reset_index(drop=True)
 
-        if drop_pole or split_antimeridian:
+        if drop_poles:
             over_pole = are_over_pole(df['geometry'], geod=geod, workers=workers)
             print(f"  Dropped {over_pole.sum()} geometries over poles")
             df = df[~over_pole].reset_index(drop=True)
@@ -363,7 +408,6 @@ class GridCrafter:
         self.units = kwargs.pop('units', None)
         self.geod = kwargs.pop('geod', None)
         self.qa_filter = kwargs.pop('qa_filter', None)
-        # self.lat_filter = kwargs.pop('lat_filter', None)
 
         # Create coordinate grids
         self.lons, self.lats = create_grid(resolution, coordinates[0:2], coordinates[2:4])
@@ -373,7 +417,7 @@ class GridCrafter:
         return self.regrid(*args, **kwargs)
 
     # -----------------------------------------------------------------------------
-    def regrid(self, product, qa_filter=None, drop_negatives=False, **kwargs):
+    def regrid(self, product, qa_filter=None, coord_filter=None, drop_negatives=False, **kwargs):
         """
         Perform a regridding over a product
 
@@ -383,6 +427,8 @@ class GridCrafter:
             Product to be regridded.
         qa_filter : float, optional
             Quality assurance filter to be applied.
+        coord_filter : tuple
+            Constrain the domain by masking values outside the limits given.
         drop_negatives : bool, optional
             Indicates if negative values should be considered or not.
 
@@ -391,12 +437,16 @@ class GridCrafter:
         np.ndarray
             2D-array with the weighted values.
         """
+        drop_poles = kwargs.pop('drop_poles', False)
         threads = kwargs.pop('threads', None)
         workers = kwargs.pop('workers', None)
 
         kprod = product.copy() if isinstance(product, Kalkutun) else Kalkutun(product)
 
-        # ToDo: cut outside limits
+        if coord_filter is not None:
+            kprod.coordinates_filter(coord_filter, inplace=True)
+        else:
+            kprod.coordinates_filter(self.lon_lim, self.lat_lim, inplace=True)
 
         if self.units is not None:
             kprod.convert_units(self.units)
@@ -407,15 +457,11 @@ class GridCrafter:
             kprod.qa_filter(self.qa_filter, inplace=True)
 
         df_obs = kprod.get_polygon_dataframe(
-            drop_masked=True, drop_invalid=True, drop_pole=True, split_antimeridian=True
-        )      # This is expensive, specially when checking poles
+            drop_masked=True, drop_invalid=True, drop_poles=drop_poles, split_antimeridian=True
+        )
 
         if drop_negatives is True:
             df_obs = df_obs[df_obs['value'] > 0.0]
-
-        # ToDo: Implement filter in get_polygon_dataframe to choose in between filter by latitude or check poles.
-        # if self.lat_filter is not None:
-        #     df_obs = filter_by_latitude(df_obs, lat_thresh=self.lat_filter)
 
         if self.interpolation == 'weighted':
             regrid = weighted_regrid(
