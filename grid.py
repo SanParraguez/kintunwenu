@@ -29,7 +29,7 @@ def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=No
     ----------
     polygons : list or pd.Series or np.ndarray of Polygon, len (n)
         The n polygons to be regridded.
-    values : list or pd.Series pr np.ndarray, shape (n,)
+    values : list or pd.Series or np.ndarray, shape (n,)
         The values of each polygon.
     grid_lon : np.ndarray, shape (j,)
         Gridded longitudes.
@@ -68,6 +68,7 @@ def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=No
     )
     df_grid['area'].fillna(method='ffill', inplace=True)
 
+    # ToDo: Implement KDtree and Rtree, check speeds.
     # Create and query STRtree
     tree = shapely.STRtree(df_grid['polygon'].to_numpy())
     inters = tree.query(polygons)
@@ -162,7 +163,6 @@ def create_geo_grid(lons, lats, mode='corners'):
             - 'yi': The y index of the cell.
             - 'polygon': The Shapely Polygon object representing the cell.
     """
-
     lons = np.array(lons)
     lats = np.array(lats)
     if lons.ndim == 1 and lats.ndim == 1:

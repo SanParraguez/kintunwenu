@@ -16,6 +16,7 @@ __all__ = [
 # ============= IMPORTS ===============================
 import numpy as np
 import shapely
+from datetime import datetime
 from netCDF4 import Dataset
 from .geodata import create_geo_dataset, are_over_pole
 from .grid import create_grid, weighted_regrid
@@ -79,7 +80,7 @@ class Kalkutun:
     """
     __module__ = 'kintunwenu'
 
-    def __init__(self, dataset):
+    def __init__(self, dataset, tracer=None):
         """
         Initializes the Kalkutun object.
 
@@ -87,6 +88,8 @@ class Kalkutun:
         ----------
         dataset : netCDF4.Dataset
             The netCDF4 dataset containing the product.
+        tracer : string (optional)
+            Indicates which tracer to retrieve in case the file contains more than one.
 
         Raises
         ------
@@ -105,6 +108,12 @@ class Kalkutun:
             except OSError:
                 dataset = download_ncfile(dataset)
 
+        # Attempt to retrieve id information from product
+        try:
+            self.id = dataset.id
+        except AttributeError:
+            raise NotImplementedError('Unable to retrieve id information from product.')
+
         # Attempt to retrieve sensor information from product
         try:
             self.sensor = dataset.sensor.lower()
@@ -114,28 +123,36 @@ class Kalkutun:
         # Initialize class attributes
         self.longitude = None
         self.latitude = None
+        self.longitude_corners = None
+        self.latitude_corners = None
         self.tracer = None
         self.product = None
         self.units = None
         self.data = None
         self.qa_value = None
+        self.time_utc = None
 
-        # ---------- TROPOMI ----------
-        if self.sensor in ['tropomi']:
+        var_names = [
+            'longitude',
+            'latitude',
+            'time_utc',
+            'qa_value'
+        ]
 
-            var_names = [
-                'longitude',
-                'latitude',
-                'time_utc',
-                'qa_value'
-            ]
+        # -----------------------------------------------
+        #  TROPOMI NO2 L2
+        # -----------------------------------------------
+        if 'TROPOMI/S5P NO2 1-Orbit L2 Swath' in dataset.title:
 
-            self.tracer = dataset.id.split('__')[1]
-            variables = dataset.groups['PRODUCT'].variables
+            self.tracer = dataset.id.split('__')[1].upper()
+
+            if tracer:
+                if self.tracer != tracer.upper():
+                    print(f'Warning: retrieved {self.tracer} but {tracer.upper()} was given.')
 
             # Retrieve attributes from variables in product
             attrs = {}
-            for key, value in variables.items():
+            for key, value in dataset.groups['PRODUCT'].variables.items():
                 if key.lower().endswith('_column'):
                     attrs.update({'data': value[:].squeeze(),
                                   'units': standardise_unit_string(value.units),
@@ -144,12 +161,43 @@ class Kalkutun:
                     # Here we are assuming that the 'time' dimension is 1
                     attrs.update({key: value[0]})
 
-            for key, value in attrs.items():
-                setattr(self, key, value[:])
+        # -----------------------------------------------
+        #  TROPOMI IUP CH4/C0 L2
+        # -----------------------------------------------
+        elif dataset.title == 'TROPOMI/WFMD XCH4 and XCO':
 
-        # Sensor not recognized
+            if tracer is None:
+                raise AssertionError('Given dataset contains both CH4 and CO data, a tracer has to be provided.')
+            self.tracer = tracer.upper()
+
+            if self.tracer == 'CH4':
+                tracer_name = 'xch4'
+                product_name = dataset.variables[tracer_name].standard_name
+            elif self.tracer == 'CO':
+                tracer_name = 'xco'
+                product_name = 'dry_atmosphere_mole_fraction_of_carbon_monoxide'
+            else:
+                raise AttributeError(f'Tracer provided {self.tracer} not found in dataset')
+
+            attrs = {
+                'data': dataset.variables[tracer_name][:],
+                'units': standardise_unit_string(dataset.variables[tracer_name].units),
+                'product': product_name,
+                'longitude': dataset.variables['longitude'][:],
+                'latitude': dataset.variables['latitude'][:],
+                'longitude_corners': dataset.variables['longitude_corners'][:],
+                'latitude_corners': dataset.variables['latitude_corners'][:],
+                'qa_value': dataset.variables[f'{tracer_name}_quality_flag'][:],
+                'time_utc': np.array([str(datetime.fromtimestamp(t)) for t in dataset.variables['time'][:]])
+            }
+
+        # Product not recognized
         else:
-            raise NotImplementedError('Sensor has not been implemented.')
+            raise NotImplementedError(f"Product '{dataset.title}' has not been implemented.")
+
+        # Set attributes
+        for key, value in attrs.items():
+            setattr(self, key, value[:])
 
     # -----------------------------------------------------------------------------
     def max(self, *args, **kwargs):
@@ -237,6 +285,9 @@ class Kalkutun:
             If inplace is False, A masked array with values below the minimum QA value masked.
             None otherwise.
         """
+        if (self.qa_value == 0.0).all():
+            print('Warning: Product seems to not have any valid quality value')
+            return self.data if not inplace else None
         if inplace:
             self.data = np.ma.masked_where(self.qa_value < min_value, self.data)
         else:
@@ -302,8 +353,13 @@ class Kalkutun:
             A list of Polygon objects created from the product's longitude and latitude. If `return_data`
             is True, it also returns a tuple containing the Polygon objects and the corresponding data.
         """
-        mode = 'centers' if self.data.shape == self.longitude.shape else 'corners'
-        coords = get_corners_from_grid(self.longitude, self.latitude, mode=mode)
+        if self.longitude_corners is not None and self.latitude_corners is not None:
+            mode = 'polygons'
+            coords = np.moveaxis(np.asarray([self.longitude_corners, self.latitude_corners]), 0, -1)
+        else:
+            mode = 'centers' if self.data.shape == self.longitude.shape else 'corners'
+            coords = get_corners_from_grid(self.longitude, self.latitude, mode=mode)
+
         polygons = shapely.polygons(coords)
 
         if return_data:

@@ -45,7 +45,7 @@ def polycolor(polygons, values, ax=None, **kwargs):
     norm = kwargs.pop('norm', Normalize())
 
     smap = ScalarMappable(norm, cmap)
-    # ToDo: check if get_coords_from_polygons is still working
+    # ToDo: check if get_coordinates_from_polygons is still working
     collection = PolyCollection(get_coordinates_from_polygons(polygons), facecolor=smap.to_rgba(values),
                                 transform=ccrs.PlateCarree())
 

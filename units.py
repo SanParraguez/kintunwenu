@@ -37,12 +37,13 @@ def standardise_unit_string(units):
     str
         String with the same unit
     """
-    if units == 'mol m-2':
-        units = 'mol/m2'
-    elif units == 'cm^-2':
-        units = 'molec/cm2'
+    convert_dict = {
+        'mol m-2': 'mol/m2',
+        'cm^-2':   'molec/cm2',
+        '1e-9':    'ppb',
+    }
 
-    return units
+    return convert_dict.pop(units, units)
 
 # =================================================================================
 
@@ -70,6 +71,8 @@ def convert_units(data, from_unit, to_unit, species=None):
     np.ndarray
         The converted data.
     """
+    # ToDo: change to a two-step process, first to a standard unit and then to the desired.
+    #   This should avoid the huge amount of if-else conditions.
     data = np.ma.array(data)
 
     from_unit = from_unit.lower().replace(' ', '')
