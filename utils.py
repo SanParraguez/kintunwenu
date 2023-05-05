@@ -5,58 +5,71 @@
 =======================================================
 -> UTILS
 
-Provides classes to handle different type of datasets retrieved from https://disc.gsfc.nasa.gov
+Provides useful functions for the package.
 """
 __all__ = [
-    '_standardise_unit_string',
-    '_smoothn_fill'
+    'timeit',
 ]
 
-# ============= IMPORTS ===============
-
+# ============= IMPORTS ===============================
+import time
 import numpy as np
-from scipy.ndimage import label, sum_labels
-from .smoothn import smoothn
 
 # =================================================================================
 
-def _standardise_unit_string(units):
+def timeit(func, name=None):
     """
-    Standardise units strings.
-    """
-    if units == 'mol m-2':
-        units = 'mol/m2'
-    elif units == 'cm^-2':
-        units = 'molec/cm2'
-
-    return units
-
-# =================================================================================
-
-def _smoothn_fill(data, tolerance=5, s=None, robust=False, grid=None):
-    """
-    Fill missing values with a smoothn method, based on the cosine discrete transform.
-    Returns the filled array.
+    Decorator that measures the execution time of a function and prints it to the console.
 
     Parameters
     ----------
-    data : np.ma.MaskedArray
-        n-dimensional data to be filled.
-    tolerance : int
-        Maximum number of pixels in gap to be filled.
-    s : float
-        Smoothing parameter, calculated automatically if not provided to minimize GCV score.
-    robust : bool
-        Indicates if a robust iteration is executed to avoid outliers.
-    grid : tuple, list
-        Grid dimensions, assumed regular if not given.
+    func : callable
+        The function to be timed.
+    name : str
+        Name of the function to be displayed
+
+    Returns
+    -------
+    callable
+        A new function that wraps the original function with timing functionality.
     """
-    labeled, n_labels = label(data.mask, np.ones((3, 3), dtype=np.int16))
-    sizes = sum_labels(np.ones_like(data), labeled, index=range(n_labels + 1))
-    mask_size = sizes <= tolerance
-    mask_clean = mask_size[labeled]
+    name = func.__name__ if not name else name
 
-    z = data.copy()
-    z[mask_clean] = smoothn(data, s, robust=robust, di=grid)[mask_clean]
+    def wrapper(*args, **kwargs):
+        """
+        Wrapper function that calculates the execution time of the wrapped function.
+        """
 
-    return z
+        tic = time.perf_counter()
+        result = func(*args, **kwargs)
+        toc = time.perf_counter()
+        print(f'{name}: {toc-tic:.4g} s')
+        return result
+
+    return wrapper
+
+# =================================================================================
+
+def pick_random_value(*args, seed=None):
+    """
+    Randomly selects an index in the range of the size of the arguments,
+    and returns that index and a tuple of values from the input arrays at that index.
+
+    Parameters
+    ----------
+    *args : array-like
+        One or more input arrays.
+    seed : int
+        Optional seed value for numpy.random.seed().
+
+    Returns
+    -------
+        Tuple containing an integer index and a tuple of values from the input arrays at that index.
+    """
+    args = np.array(args)
+    np.random.seed(seed)
+    index = np.random.randint(args[0].size)
+    values = tuple(arg.flatten()[index] for arg in args)
+    return index, values
+
+# =================================================================================
