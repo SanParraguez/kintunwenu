@@ -13,8 +13,11 @@ Provides classes to handle atmospheric trace datasets.
 Suitable for download, process and visualize satellite data.
 """
 __name__ = 'kintunwenu'
-__version__ = '0.2'
-__release__ = '2023-02'
+__version__ = '1.0'
+__release__ = '2023-05'
+__authors__ = [
+    "Santiago Parraguez Cerda"
+]
 
 __all__ = [
     'Kalkutun',
