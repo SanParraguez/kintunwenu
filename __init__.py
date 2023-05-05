@@ -20,9 +20,11 @@ __all__ = [
     'Kalkutun',
     'GridCrafter',
 ]
+
 # ===== IMPORTS =======================================
 from . import geodata
 from . import grid
+from . import netcdf as nc
 from . import plot
 from . import polygons
 from . import scrap

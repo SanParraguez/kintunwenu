@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 import shapely
 from shapely.ops import split
+from .geodata import create_geo_dataset
 
 # =================================================================================
 
@@ -137,17 +138,17 @@ def get_corners_from_grid(longitude, latitude, mode='center'):
 
 # =================================================================================
 
-def split_anomaly_polygons(polygons, data=None, verbose=1):
+def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
     """Splits polygons that cross the antimeridian (180 degrees longitude).
 
     Parameters
     ----------
     polygons : np.ndarray or pd.Series
         Array of shapely.geometry.Polygon objects to split.
-    data : np.ndarray or pd.Series, optional
-        Array of data to carry with the polygons. Default is None.
-    verbose : int, optional
-        Verbosity level. If greater than 0, print the number of polygons split. Default is 1.
+    data : np.ndarray or pd.Series or list or dict, optional
+        Data to carry with the polygons. Default is None.
+    to_dataframe : bool, optional
+        Indicates if a dataframe is returned when possible.
 
     Returns
     -------
@@ -157,26 +158,30 @@ def split_anomaly_polygons(polygons, data=None, verbose=1):
     """
     if isinstance(polygons, pd.Series):
         polygons = polygons.to_numpy()
-    if isinstance(data, pd.Series):
-        data = data.to_numpy()
+    elif isinstance(polygons, pd.DataFrame) and data is None:
+        data = polygons.copy()
+        polygons = data.pop('geometry')
+
+    antimeridian = create_meridian(180.)
 
     coords = get_coordinates_from_polygons(polygons)
-    antimeridian = create_meridian(180.)
-    new_data = None
-
     # Try to create array, not possible if geometries have different number of points
     try:
         coords = np.array(coords, dtype=np.float64)
     except ValueError:
         pass
 
+    # ---------- Get new polygons ----------
     if isinstance(coords, np.ndarray):
 
         # Get weirdly long polygons, assuming there should not be huge polygons
         anomaly = (coords[..., 0].max(axis=-1) - coords[..., 0].min(axis=-1)) > 180
 
         if not anomaly.any():
-            return polygons, data if data is not None else polygons
+            if to_dataframe:
+                return create_geo_dataset(polygons, **data)
+            else:
+                return polygons, data if data is not None else polygons
 
         # Get only coords from anomaly polygons
         coords, new_coords = coords[~anomaly], coords[anomaly]
@@ -204,20 +209,38 @@ def split_anomaly_polygons(polygons, data=None, verbose=1):
 
             new_polygons = np.array([shapely.polygons(new_coord) for new_coord in new_coords])
 
-        if data is not None:
-            data, new_data = data[~anomaly], data[anomaly]
-            new_data = np.ma.concatenate([np.tile(d, n) for d, n in zip(new_data, repeat_index)])
-
     else:
         raise NotImplementedError('Support for lists will be implemented')
-
-    if verbose > 0:
-        print(f"Split into {len(polygons) + len(polygons)} polygons")
+    # -------------------------------
 
     if data is not None:
-        return np.concatenate([polygons, new_polygons]), np.concatenate([data, new_data])
+
+        if isinstance(data, pd.Series):
+            data = data.to_numpy()
+        elif isinstance(data, pd.DataFrame):
+            data = data.to_dict(orient='series')
+        elif isinstance(data, list):
+            data = np.asarray(data)
+
+        if isinstance(data, np.ndarray):
+            data, new_data = data[~anomaly], data[anomaly]
+            new_data = np.ma.concatenate([np.tile(d, (n, 1)) for d, n in zip(new_data, repeat_index)]).squeeze()
+            data = np.concatenate([data, new_data])
+        elif isinstance(data, dict):
+            for key, value in data.items():
+                value = np.asarray(value)
+                value, new_value = value[~anomaly], value[anomaly]
+                new_value = np.ma.concatenate([np.tile(d, (n, 1)) for d, n in zip(new_value, repeat_index)]).squeeze()
+                data[key] = np.concatenate([value, new_value])
+        else:
+            raise TypeError(f'Data type {type(data)} not supported')
+
+    polygons = np.concatenate([polygons, new_polygons])
+
+    if to_dataframe:
+        return create_geo_dataset(polygons, **data)
     else:
-        return np.concatenate([polygons, new_polygons])
+        return polygons, data if data is not None else polygons
 
 # =================================================================================
 

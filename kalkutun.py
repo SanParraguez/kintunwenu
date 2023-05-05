@@ -16,7 +16,6 @@ __all__ = [
 # ============= IMPORTS ===============================
 import numpy as np
 import shapely
-from datetime import datetime
 from netCDF4 import Dataset
 from .geodata import create_geo_dataset, are_over_pole
 from .grid import create_grid, weighted_regrid
@@ -108,6 +107,22 @@ class Kalkutun:
             except OSError:
                 dataset = download_ncfile(dataset)
 
+        # Initialize class attributes
+        self.data = np.ma.empty(0)
+        self.units = None
+        self.product = None
+        self.tracer = None
+        self.longitude = np.empty(0)
+        self.latitude = np.empty(0)
+        self.longitude_corners = None
+        self.latitude_corners = None
+        self.qa_value = None
+        self.time_utc = None
+        self.format = None      # polygons, centers or corners
+
+        # -----------------------------------------------
+        #  General
+        # -----------------------------------------------
         # Attempt to retrieve id information from product
         try:
             self.id = dataset.id
@@ -120,84 +135,78 @@ class Kalkutun:
         except AttributeError:
             raise NotImplementedError('Unable to retrieve sensor information from product.')
 
-        # Initialize class attributes
-        self.longitude = None
-        self.latitude = None
-        self.longitude_corners = None
-        self.latitude_corners = None
-        self.tracer = None
-        self.product = None
-        self.units = None
-        self.data = None
-        self.qa_value = None
-        self.time_utc = None
-
-        var_names = [
-            'longitude',
-            'latitude',
-            'time_utc',
-            'qa_value'
-        ]
-
         # -----------------------------------------------
         #  TROPOMI NO2 L2
         # -----------------------------------------------
         if 'TROPOMI/S5P NO2 1-Orbit L2 Swath' in dataset.title:
 
-            self.tracer = dataset.id.split('__')[1].upper()
-
-            if tracer:
-                if self.tracer != tracer.upper():
-                    print(f'Warning: retrieved {self.tracer} but {tracer.upper()} was given.')
+            id_tracer = dataset.id.split('__')[1].upper()
+            if tracer and id_tracer != tracer.upper():
+                print(f'Warning: retrieved {id_tracer} but {tracer.upper()} was given.')
 
             # Retrieve attributes from variables in product
-            attrs = {}
-            for key, value in dataset.groups['PRODUCT'].variables.items():
-                if key.lower().endswith('_column'):
-                    attrs.update({'data': value[:].squeeze(),
-                                  'units': standardise_unit_string(value.units),
-                                  'product': key})
-                elif key in var_names:
-                    # Here we are assuming that the 'time' dimension is 1
-                    attrs.update({key: value[0]})
+            variables = dataset.groups['PRODUCT'].variables
+            product_name = [key for key in variables.keys() if key.endswith('_column')]
+            product_name = product_name[0] if len(product_name) == 1 \
+                else AttributeError('Found more tan one column in data')
+
+            # Collect attributes
+            attrs = {
+                'data': variables[product_name][0],
+                'units': standardise_unit_string(variables[product_name].units),
+                'product': product_name,
+                'tracer': id_tracer,
+                'longitude': variables['longitude'][0],
+                'latitude': variables['latitude'][0],
+                'qa_value': variables['qa_value'][0],
+                'time_utc': np.array(variables['time_utc'][0], dtype='datetime64[ns]'),
+                'format': 'centers',
+            }
 
         # -----------------------------------------------
         #  TROPOMI IUP CH4/C0 L2
         # -----------------------------------------------
         elif dataset.title == 'TROPOMI/WFMD XCH4 and XCO':
 
+            # Check if tracer is provided
             if tracer is None:
                 raise AssertionError('Given dataset contains both CH4 and CO data, a tracer has to be provided.')
-            self.tracer = tracer.upper()
+            else:
+                tracer = tracer.upper()
 
-            if self.tracer == 'CH4':
+            # Get product based on tracer
+            if tracer == 'CH4':
                 tracer_name = 'xch4'
                 product_name = dataset.variables[tracer_name].standard_name
-            elif self.tracer == 'CO':
+            elif tracer == 'CO':
                 tracer_name = 'xco'
                 product_name = 'dry_atmosphere_mole_fraction_of_carbon_monoxide'
             else:
-                raise AttributeError(f'Tracer provided {self.tracer} not found in dataset')
+                raise AttributeError(f'Tracer provided {tracer} not found in dataset')
 
+            # Collect attributes
             attrs = {
                 'data': dataset.variables[tracer_name][:],
                 'units': standardise_unit_string(dataset.variables[tracer_name].units),
                 'product': product_name,
+                'tracer': tracer,
                 'longitude': dataset.variables['longitude'][:],
                 'latitude': dataset.variables['latitude'][:],
                 'longitude_corners': dataset.variables['longitude_corners'][:],
                 'latitude_corners': dataset.variables['latitude_corners'][:],
                 'qa_value': dataset.variables[f'{tracer_name}_quality_flag'][:],
-                'time_utc': np.array([str(datetime.fromtimestamp(t)) for t in dataset.variables['time'][:]])
+                'time_utc': np.array(dataset.variables['time'][:], dtype='datetime64[s]'),
+                'format': 'polygons',
             }
 
         # Product not recognized
         else:
             raise NotImplementedError(f"Product '{dataset.title}' has not been implemented.")
+        # -----------------------------------------------
 
         # Set attributes
         for key, value in attrs.items():
-            setattr(self, key, value[:])
+            setattr(self, key, value)
 
     # -----------------------------------------------------------------------------
     def max(self, *args, **kwargs):
@@ -207,6 +216,19 @@ class Kalkutun:
     def min(self, *args, **kwargs):
         """This property returns the minimum value of the data array."""
         return self.data.min(*args, **kwargs)
+
+    def mean(self, *args, **kwargs):
+        """This property returns the mean value of the data array."""
+        return self.data.mean(*args, **kwargs)
+
+    def count(self, *args, **kwargs):
+        """This property returns the count value of the data array."""
+        return self.data.count(*args, **kwargs)
+
+    @property
+    def size(self):
+        """This property returns the size of the data array."""
+        return self.data.size
 
     @property
     def shape(self):
@@ -319,6 +341,16 @@ class Kalkutun:
         else:
             raise ValueError('Coordinates limits should be provided by one or all together.')
 
+        lon_min = lon_min if lon_min else -180
+        lon_max = lon_max if lon_max else 180
+        lat_min = lat_min if lat_min else -90
+        lat_max = lat_max if lat_max else 90
+
+        if lon_min >= lon_max or lon_min > 180 or lon_max < -180:
+            raise AssertionError(f'Longitude {lon_min} has to be smaller than {lon_max}')
+        if lat_min >= lat_max or lat_min > 90 or lat_max < -90:
+            raise AssertionError(f'Latitude {lat_min} has to be smaller than {lat_max}')
+
         new_data = self.data.copy()
         if self.longitude.shape == self.data.shape:
             if lon_min:
@@ -338,35 +370,21 @@ class Kalkutun:
             return new_data
 
     # -----------------------------------------------------------------------------
-    def get_polygons(self, return_data=True):
+    def get_polygons(self):
         """
         Returns a list of Polygon objects created from the product's longitude and latitude.
 
-        Parameters
-        ----------
-        return_data : bool, optional
-            Indicates whether to return the corresponding data. Defaults to True.
-
         Returns
         -------
-        list[Polygon] or tuple[list, np.ndarray]
-            A list of Polygon objects created from the product's longitude and latitude. If `return_data`
-            is True, it also returns a tuple containing the Polygon objects and the corresponding data.
+        np.ndarray
+            An array of Polygon objects created from the product's longitude and latitude.
         """
         if self.longitude_corners is not None and self.latitude_corners is not None:
-            mode = 'polygons'
             coords = np.moveaxis(np.asarray([self.longitude_corners, self.latitude_corners]), 0, -1)
         else:
-            mode = 'centers' if self.data.shape == self.longitude.shape else 'corners'
-            coords = get_corners_from_grid(self.longitude, self.latitude, mode=mode)
+            coords = get_corners_from_grid(self.longitude, self.latitude, mode=self.format)
 
-        polygons = shapely.polygons(coords)
-
-        if return_data:
-            data = self.data[1:-1, 1:-1].flatten() if mode == 'centers' else self.data.flatten()
-            return polygons, data
-        else:
-            return polygons
+        return shapely.polygons(coords)
 
     # -----------------------------------------------------------------------------
     def get_polygon_dataframe(self, drop_masked=True, drop_invalid=True, split_antimeridian=True,
@@ -398,32 +416,44 @@ class Kalkutun:
                 - 'value': The data values associated with each polygon.
                 - 'polygon': The Shapely Polygon objects representing geographical polygons.
         """
+        if self.time_utc.ndim == self.data.ndim - 1:
+            time_utc = np.repeat(self.time_utc[..., None], self.data.shape[-1], axis=-1)
+        else:
+            time_utc = self.time_utc
+
+        if self.format == 'centers':
+            data = self.data[1:-1, 1:-1].flatten()
+            time_utc = time_utc[1:-1, 1:-1].flatten()
+        elif self.format in ['corners', 'polygons']:
+            data = self.data.flatten()
+            time_utc = time_utc.flatten()
+        else:
+            raise AssertionError('Format of the data not recognized')
+
         print("Retrieve polygons from dataset")
-        polygons_array, data = self.get_polygons(return_data=True)
+        polygons_array = self.get_polygons()
         print(f"  Created {len(polygons_array)} polygons")
+        df = create_geo_dataset(polygons_array, value=data, timestamp=time_utc)
 
         if drop_masked and np.ma.is_masked(data):
-            polygons_array, data = polygons_array[~data.mask], data[~data.mask]
-            print(f"  Dropped masked to {len(polygons_array)} geometries")
-
-        df = create_geo_dataset(polygons_array, data)
+            df = df.iloc[~data.mask]
+            print(f"  Dropped masked to {len(df)} geometries")
 
         if drop_invalid or drop_poles or split_antimeridian:
             is_valid = shapely.is_valid(df['geometry'])
             print(f"  Dropped {len(df)-is_valid.sum()} invalid geometries")
-            df = df[is_valid].reset_index(drop=True)
+            df = df[is_valid]
 
         if drop_poles:
             over_pole = are_over_pole(df['geometry'], geod=geod, workers=workers)
             print(f"  Dropped {over_pole.sum()} geometries over poles")
-            df = df[~over_pole].reset_index(drop=True)
+            df = df[~over_pole]
 
         if split_antimeridian:
-            polygons_array, data = split_anomaly_polygons(df['geometry'], df['value'], verbose=0)
-            print(f"  Split into {len(polygons_array)} ({len(df)}) polygons")
-            df = create_geo_dataset(polygons_array, data)
+            df = split_anomaly_polygons(df, to_dataframe=True)
+            print(f"  Split into {len(df)} polygons")
 
-        return df
+        return df.reset_index(drop=True)
 
 # =================================================================================
 
@@ -446,13 +476,13 @@ class GridCrafter:
         if len(coordinates) != 4:
             raise AssertionError(f'An iterable with 4 values must be given for '
                                  f'coordinates limits ({len(coordinates)} given).')
-        if (coordinates[1] <= coordinates[0]) | (coordinates[3] <= coordinates[2]):
+        if (coordinates[1] <= coordinates[0]) or (coordinates[3] <= coordinates[2]):
             raise AssertionError(f'Coordinates must be ordered, with longitudes first and latitudes last.')
         self.lon_lim = tuple(coordinates[:2])
         self.lat_lim = tuple(coordinates[2:])
 
         self.grid_resolution = (resolution, resolution) if isinstance(resolution, (float, int)) else tuple(resolution)
-        if (self.grid_resolution[0] <= 0) | (self.grid_resolution[1] <= 0):
+        if (self.grid_resolution[0] <= 0) or (self.grid_resolution[1] <= 0):
             raise AssertionError('Given grid resolution must be greater than 0.')
 
         if interpolation in ['weighted']:
@@ -494,8 +524,6 @@ class GridCrafter:
             2D-array with the weighted values.
         """
         drop_poles = kwargs.pop('drop_poles', False)
-        threads = kwargs.pop('threads', None)
-        workers = kwargs.pop('workers', None)
 
         kprod = product.copy() if isinstance(product, Kalkutun) else Kalkutun(product)
 
@@ -521,8 +549,8 @@ class GridCrafter:
 
         if self.interpolation == 'weighted':
             regrid = weighted_regrid(
-                df_obs['geometry'], df_obs['value'], self.lons, self.lats,
-                min_fill=self.min_fill, geod=self.geod, threads=threads, workers=workers
+                self.lons, self.lats, df_obs['geometry'], df_obs.drop('geometry', axis=1),
+                min_fill=self.min_fill, geod=self.geod, **kwargs
             )
         else:
             raise NotImplementedError('Interpolation type not implemented')

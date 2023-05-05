@@ -29,7 +29,7 @@ from shapely.geometry import Polygon
 
 # =================================================================================
 
-def create_geo_dataset(geometries, data):
+def create_geo_dataset(geometries, **kwargs):
     """
     Creates a pandas DataFrame that combines Shapely Polygon objects and data values.
 
@@ -37,8 +37,8 @@ def create_geo_dataset(geometries, data):
     ----------
     geometries : List[shapely.geometry.BaseGeometry]
         A list of Shapely Geometries objects representing geographical polygons.
-    data : List[float]
-        A list of float values representing data associated with each polygon.
+    kwargs : list or np.ndarray or pd.Series
+        Data to include in the DataFrame
 
     Returns
     -------
@@ -46,7 +46,8 @@ def create_geo_dataset(geometries, data):
         - 'value': The data values associated with each polygon.
         - 'geometry': The Shapely Polygon objects representing geographical polygons.
     """
-    df = pd.DataFrame({'value': data, 'geometry': geometries})
+    kwargs.update({'geometry': geometries})
+    df = pd.DataFrame(kwargs)
     return df
 
 # =================================================================================

@@ -16,6 +16,7 @@ import os
 from netCDF4 import Dataset
 
 # === FUNCTIONS =======================================================
+
 def create_nc_file(path, filename, dimensions=None, variables=None, attributes=None, clobber=True, verbose=1):
     """
     Easily creates a simple netCDF4 file. Can handle dimensions and variables from dictionaries.

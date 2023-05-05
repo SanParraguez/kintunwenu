@@ -20,7 +20,16 @@ import numpy as np
 # Define molar masses (in g/mol) for commonly measured gas species
 molar_masses = {'o3': 47.9982, 'no2': 46.0055, 'so2': 64.064,
                 'co2': 44.0095, 'ch4': 16.0425}
+
+# Avogadro constant
 Na = 6.02214076 * 1e23
+
+# Unit convert dictionary
+convert_dict = {
+    'mol m-2': 'mol/m2',
+    'cm^-2': 'molec/cm2',
+    '1e-9': 'ppb',
+}
 # =================================================================================
 
 def standardise_unit_string(units):
@@ -37,13 +46,7 @@ def standardise_unit_string(units):
     str
         String with the same unit
     """
-    convert_dict = {
-        'mol m-2': 'mol/m2',
-        'cm^-2':   'molec/cm2',
-        '1e-9':    'ppb',
-    }
-
-    return convert_dict.pop(units, units)
+    return convert_dict.get(units, units)
 
 # =================================================================================
 
@@ -75,8 +78,8 @@ def convert_units(data, from_unit, to_unit, species=None):
     #   This should avoid the huge amount of if-else conditions.
     data = np.ma.array(data)
 
-    from_unit = from_unit.lower().replace(' ', '')
-    to_unit = to_unit.lower().replace(' ', '')
+    from_unit = standardise_unit_string(from_unit.lower())
+    to_unit = standardise_unit_string(to_unit.lower())
 
     if from_unit == to_unit:
         return data
@@ -90,7 +93,6 @@ def convert_units(data, from_unit, to_unit, species=None):
             raise ValueError(f'Unit transformation {from_unit} -> {to_unit} not recognized')
 
     conv_factor = 1.0
-
     from_num, from_den = from_unit.split('/')
     to_num, to_den = to_unit.split('/')
 

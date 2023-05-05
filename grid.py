@@ -3,7 +3,7 @@
 =======================================================
 ===                   KINTUN-WENU                   ===
 =======================================================
-GRID
+-> GRID
 
 Submodule that contains the functions for regridding.
 """
@@ -16,25 +16,26 @@ __all__ = [
 import numpy as np
 import pandas as pd
 import shapely
+from datetime import datetime
 from .geodata import get_intersections, get_areas
 from .polygons import get_corners_from_grid
 
 # =================================================================================
 
-def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=None, **kwargs):
+def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None, **kwargs):
     """
     Performs a weighted regridding of polygons into a given regular grid.
 
     Parameters
     ----------
-    polygons : list or pd.Series or np.ndarray of Polygon, len (n)
-        The n polygons to be regridded.
-    values : list or pd.Series or np.ndarray, shape (n,)
-        The values of each polygon.
     grid_lon : np.ndarray, shape (j,)
         Gridded longitudes.
     grid_lat : np.ndarray, shape (i,)
         Gridded latitudes.
+    polygons : list or pd.Series or np.ndarray of Polygon, len (n)
+        The n polygons to be regridded.
+    data : list or pd.Series or np.ndarray or dict or pd.DataFrame, shape (n,)
+        The values of each polygon.
     min_fill : float
         Minimum fraction of cell area needed to consider the cell new value valid.
         If not achieved, it is keep as nan. Using this parameter could lead to a
@@ -49,14 +50,18 @@ def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=No
     threads = kwargs.pop('threads', None)
     workers = kwargs.pop('workers', None)
 
-    if type(polygons) == list:
+    if isinstance(polygons, list):
         polygons = np.array(polygons)
-    elif type(polygons) == pd.Series:
+    elif isinstance(polygons, pd.Series):
         polygons = polygons.to_numpy()
-    if type(values) == list:
-        values = np.array(values)
-    elif type(values) == pd.Series:
-        values = values.to_numpy()
+
+    if isinstance(data, list):
+        data = np.array(data)
+    elif isinstance(data, pd.Series):
+        data = data.to_frame().to_dict(orient='series')
+    elif isinstance(data, pd.DataFrame):
+        data = data.to_dict(orient='series')
+
     if min_fill is not None:
         assert 0.0 < min_fill < 1.0, f"Minimum fill value has to be a fraction, {min_fill} not valid."
 
@@ -75,37 +80,56 @@ def weighted_regrid(polygons, values, grid_lon, grid_lat, min_fill=None, geod=No
 
     # Create GeoDataFrame with intersections
     df_inter = df_grid.loc[inters[1], 'area'].to_frame()
-    df_inter['value'] = values.take(inters[0])
 
     # Get intersection polygons
     df_inter['polygon'] = get_intersections(
         df_grid.loc[inters[1], 'polygon'].to_numpy(),
-        polygons.take(inters[0]),
+        polygons[inters[0]],
         threads=threads
     )
 
     # Calculate intersection areas (intersections are 'inverted' so we multiply by -1)
     df_inter['inter_area'] = -1 * get_areas(df_inter['polygon'], geod=geod, workers=workers)
 
+    # Calculate new values
+    df_inter['inter_area'] = df_inter['inter_area'] / df_inter['area']
+
+    to_datetime = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if np.issubdtype(value.dtype, np.datetime64):
+                # np.array(0, dtype='datetime64[s]')
+                value = (value - datetime(1970, 1, 1)).dt.total_seconds()
+                to_datetime.append(key)
+            df_inter['data_'+key] = np.asarray(value)[inters[0]]
+    else:
+        df_inter['data'] = data[inters[0]]
+
     # Drop negative areas, undesired behaviour you will have
     df_inter = df_inter[df_inter['inter_area'] > 0.0]
 
-    # Calculate new values
-    df_inter['frac_area'] = df_inter['inter_area'] / df_inter['area']
-    df_inter['weight'] = df_inter['value'] * df_inter['frac_area']
+    for col in [col for col in df_inter.columns.to_list() if col[:4] == 'data']:
+        df_inter[col] = df_inter[col] * df_inter['inter_area']
+
     df_inter.reset_index(inplace=True)
-    df_inter = df_inter.loc[:, ('index', 'weight', 'frac_area')].groupby('index').sum()
+    df_inter = df_inter.drop(['area', 'polygon'], axis=1).groupby('index').sum()
 
     # Filter if min_fill
     if min_fill is not None:
-        df_inter = df_inter[df_inter['frac_area'] > min_fill]
-    df_grid['value'] = df_inter['weight'] / df_inter['frac_area']
+        df_inter = df_inter[df_inter['inter_area'] > min_fill]
 
-    # Reshape to grid and mask
-    grid_value = df_grid['value'].to_numpy().reshape((len(grid_lat) - 1, len(grid_lon) - 1))
-    grid_value = np.ma.masked_where(np.isnan(grid_value), grid_value)
+    for col in [col for col in df_inter.drop('inter_area', axis=1)]:
+        df_grid[col] = df_inter[col] / df_inter['inter_area']
 
-    return grid_value
+    for key in to_datetime:
+        df_grid['data_'+key] = np.array(df_grid['data_'+key], dtype='datetime64[s]')
+
+    # Reshape to grid
+    grid_values = {}
+    for col in df_inter.drop('inter_area', axis=1):
+        grid_values[col.split('_')[-1]] = df_grid[col].to_numpy().reshape((len(grid_lat) - 1, len(grid_lon) - 1))
+
+    return grid_values
 
 # =================================================================================
 
