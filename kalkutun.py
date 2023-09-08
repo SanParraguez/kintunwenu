@@ -18,7 +18,9 @@ import logging
 import shapely
 import numpy as np
 
+from contextlib import nullcontext
 from netCDF4 import Dataset
+from pathlib import Path
 from .geodata import create_geo_dataset, are_over_pole
 from .grid import create_grid, weighted_regrid
 from .polygons import get_corners_from_grid, split_anomaly_polygons
@@ -82,33 +84,38 @@ class Kalkutun:
     """
     __module__ = 'kintunwenu'
 
-    def __init__(self, dataset, tracer=None):
+    def __init__(self, dataset, tracer=None, kw_vars=None):
         """
         Initializes the Kalkutun object.
 
         Parameters
         ----------
-        dataset : netCDF4.Dataset
+        dataset : netCDF4.Dataset or string
             The netCDF4 dataset containing the product.
         tracer : string (optional)
             Indicates which tracer to retrieve in case the file contains more than one.
+        kw_vars : dict or list or tuple (optional)
+            If provided, it will iterate and get the specified variables from the dataset.
 
         Raises
         ------
         NotImplementedError
             If the sensor is not supported.
         """
-        if isinstance(dataset, Kalkutun):
-            # ToDo: handle case of Kalkutun given
-            raise NotImplementedError('Kalkutun must be created from a path to file, an url or an actual Dataset')
-
-        # ToDo: properly close the file if an error arise
-        elif isinstance(dataset, str):
-            # ToDo: improve handling of string
+        to_context = True
+        if isinstance(dataset, (str, Path)):
             try:
                 dataset = Dataset(dataset)
             except OSError:
                 dataset = download_ncfile(dataset)
+            # else:
+            #     to_context = True
+        elif isinstance(dataset, Dataset):
+            # Do not close the dataset after reading, assuming that it could be used inside
+            # another with statement outside this class.
+            to_context = False
+        else:
+            raise NotImplementedError('Kalkutun must be created from a path to file, an url or an actual Dataset')
 
         # Initialize class attributes
         self.data = np.ma.empty(0)
@@ -123,93 +130,92 @@ class Kalkutun:
         self.time_utc = None
         self.format = None      # polygons, centers or corners
 
-        # -----------------------------------------------
-        #  General
-        # -----------------------------------------------
-        # Attempt to retrieve id information from product
-        try:
-            self.id = dataset.id
-        except AttributeError:
-            raise NotImplementedError('Unable to retrieve id information from product.')
+        # Initialize context to read values from dataset
+        with dataset if to_context else nullcontext(dataset) as ds:
 
-        # Attempt to retrieve sensor information from product
-        try:
-            self.sensor = dataset.sensor.lower()
-        except AttributeError:
-            raise NotImplementedError('Unable to retrieve sensor information from product.')
+            # -----------------------------------------------
+            #  General
+            # -----------------------------------------------
+            # Attempt to retrieve id information from product
+            try:
+                self.id = ds.id
+            except AttributeError:
+                raise NotImplementedError('Unable to retrieve id information from product.')
 
-        # -----------------------------------------------
-        #  TROPOMI NO2 L2
-        # -----------------------------------------------
-        if 'TROPOMI/S5P NO2 1-Orbit L2 Swath' in dataset.title:
+            # Attempt to retrieve sensor information from product
+            try:
+                self.sensor = ds.sensor.lower()
+            except AttributeError:
+                raise NotImplementedError('Unable to retrieve sensor information from product.')
 
-            id_tracer = dataset.id.split('__')[1].upper()
-            if tracer and id_tracer != tracer.upper():
-                logging.info(f'Warning: retrieved {id_tracer} but {tracer.upper()} was given.')
+            # -----------------------------------------------
+            #  TROPOMI NO2 L2
+            # -----------------------------------------------
+            if 'TROPOMI/S5P NO2 1-Orbit L2 Swath' in ds.title:
 
-            # Retrieve attributes from variables in product
-            variables = dataset.groups['PRODUCT'].variables
-            product_name = [key for key in variables.keys() if key.endswith('_column')]
-            product_name = product_name[0] if len(product_name) == 1 \
-                else AttributeError('Found more tan one column in data')
+                id_tracer = ds.id.split('__')[1].upper()
+                if tracer and id_tracer != tracer.upper():
+                    logging.info(f'Warning: retrieved {id_tracer} but {tracer.upper()} was given.')
 
-            # Collect attributes
-            attrs = {
-                'data': variables[product_name][0],
-                'units': standardise_unit_string(variables[product_name].units),
-                'product': product_name,
-                'tracer': id_tracer,
-                'longitude': variables['longitude'][0],
-                'latitude': variables['latitude'][0],
-                'qa_value': variables['qa_value'][0],
-                'time_utc': np.array(variables['time_utc'][0], dtype='datetime64[ns]'),
-                'format': 'centers',
-            }
+                # Retrieve attributes from variables in product
+                variables = ds.groups['PRODUCT'].variables
+                product_name = [key for key in variables.keys() if key.endswith('_column')]
+                product_name = product_name[0] if len(product_name) == 1 \
+                    else AttributeError('Found more tan one column in data')
 
-        # -----------------------------------------------
-        #  TROPOMI IUP CH4/C0 L2
-        # -----------------------------------------------
-        elif dataset.title == 'TROPOMI/WFMD XCH4 and XCO':
+                # Collect attributes
+                attrs = {
+                    'data': variables[product_name][0],
+                    'units': standardise_unit_string(variables[product_name].units),
+                    'product': product_name,
+                    'tracer': id_tracer,
+                    'longitude': variables['longitude'][0],
+                    'latitude': variables['latitude'][0],
+                    'qa_value': variables['qa_value'][0],
+                    'time_utc': np.array(variables['time_utc'][0], dtype='datetime64[ns]'),
+                    'format': 'centers',
+                }
 
-            # Check if tracer is provided
-            if tracer is None:
-                raise AssertionError('Given dataset contains both CH4 and CO data, a tracer has to be provided.')
+            # -----------------------------------------------
+            #  TROPOMI IUP CH4/C0 L2
+            # -----------------------------------------------
+            elif ds.title == 'TROPOMI/WFMD XCH4 and XCO':
+
+                # Check if tracer is provided
+                if tracer is None:
+                    raise AssertionError('Given dataset contains both CH4 and CO data, a tracer has to be provided.')
+                else:
+                    tracer = tracer.upper()
+
+                # Get product based on tracer
+                if tracer == 'CH4':
+                    tracer_name = 'xch4'
+                    product_name = ds.variables[tracer_name].standard_name
+                elif tracer == 'CO':
+                    tracer_name = 'xco'
+                    product_name = 'dry_atmosphere_mole_fraction_of_carbon_monoxide'
+                else:
+                    raise AttributeError(f'Tracer provided {tracer} not found in dataset')
+
+                # Collect attributes
+                attrs = {
+                    'data': ds.variables[tracer_name][:],
+                    'units': standardise_unit_string(ds.variables[tracer_name].units),
+                    'product': product_name,
+                    'tracer': tracer,
+                    'longitude': ds.variables['longitude'][:],
+                    'latitude': ds.variables['latitude'][:],
+                    'longitude_corners': ds.variables['longitude_corners'][:],
+                    'latitude_corners': ds.variables['latitude_corners'][:],
+                    'qa_value': ds.variables[f'{tracer_name}_quality_flag'][:],
+                    'time_utc': np.array(ds.variables['time'][:], dtype='datetime64[s]'),
+                    'format': 'polygons',
+                }
+
+            # Product not recognized
             else:
-                tracer = tracer.upper()
-
-            # Get product based on tracer
-            if tracer == 'CH4':
-                tracer_name = 'xch4'
-                product_name = dataset.variables[tracer_name].standard_name
-            elif tracer == 'CO':
-                tracer_name = 'xco'
-                product_name = 'dry_atmosphere_mole_fraction_of_carbon_monoxide'
-            else:
-                raise AttributeError(f'Tracer provided {tracer} not found in dataset')
-
-            # Collect attributes
-            attrs = {
-                'data': dataset.variables[tracer_name][:],
-                'units': standardise_unit_string(dataset.variables[tracer_name].units),
-                'product': product_name,
-                'tracer': tracer,
-                'longitude': dataset.variables['longitude'][:],
-                'latitude': dataset.variables['latitude'][:],
-                'longitude_corners': dataset.variables['longitude_corners'][:],
-                'latitude_corners': dataset.variables['latitude_corners'][:],
-                'qa_value': dataset.variables[f'{tracer_name}_quality_flag'][:],
-                'time_utc': np.array(dataset.variables['time'][:], dtype='datetime64[s]'),
-                'format': 'polygons',
-            }
-
-        # Product not recognized
-        else:
-            dataset.close()
-            raise NotImplementedError(f"Product '{dataset.title}' has not been implemented.")
-        # -----------------------------------------------
-        
-        # close file
-        dataset.close()
+                raise NotImplementedError(f"Product '{ds.title}' has not been implemented.")
+            # -----------------------------------------------
 
         # Set attributes
         for key, value in attrs.items():
@@ -424,6 +430,8 @@ class Kalkutun:
                 - 'value': The data values associated with each polygon.
                 - 'polygon': The Shapely Polygon objects representing geographical polygons.
         """
+        # ToDo: Add optional argument to get different variables in the dataframe
+        #   This will help to regrid, for instance, the averaging kernel
         if self.time_utc.ndim == self.data.ndim - 1:
             time_utc = np.repeat(self.time_utc[..., None], self.data.shape[-1], axis=-1)
         else:
