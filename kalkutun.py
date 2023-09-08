@@ -14,8 +14,10 @@ __all__ = [
 ]
 
 # ============= IMPORTS ===============================
-import numpy as np
+import logging
 import shapely
+import numpy as np
+
 from netCDF4 import Dataset
 from .geodata import create_geo_dataset, are_over_pole
 from .grid import create_grid, weighted_regrid
@@ -33,6 +35,7 @@ class Kalkutun:
     > TROPOMI
         - S5P_OFFL_L2__NO2
         - S5P_RPRO_L2__NO2
+        - IUP
 
     The class provides an interface to easily access and manipulate the product data. It also includes methods to
     convert units, retrieve polygon data, and create a dataframe of the polygon data.
@@ -142,7 +145,7 @@ class Kalkutun:
 
             id_tracer = dataset.id.split('__')[1].upper()
             if tracer and id_tracer != tracer.upper():
-                print(f'Warning: retrieved {id_tracer} but {tracer.upper()} was given.')
+                logging.info(f'Warning: retrieved {id_tracer} but {tracer.upper()} was given.')
 
             # Retrieve attributes from variables in product
             variables = dataset.groups['PRODUCT'].variables
@@ -201,8 +204,12 @@ class Kalkutun:
 
         # Product not recognized
         else:
+            dataset.close()
             raise NotImplementedError(f"Product '{dataset.title}' has not been implemented.")
         # -----------------------------------------------
+        
+        # close file
+        dataset.close()
 
         # Set attributes
         for key, value in attrs.items():
@@ -308,7 +315,7 @@ class Kalkutun:
             None otherwise.
         """
         if (self.qa_value == 0.0).all():
-            print('Warning: Product seems to not have any valid quality value')
+            logging.info('Warning: Product seems to not have any valid quality value')
             return self.data if not inplace else None
         if inplace:
             self.data = np.ma.masked_where(self.qa_value < min_value, self.data)
@@ -321,8 +328,9 @@ class Kalkutun:
 
         Parameters
         ----------
-        args
-        inplace
+        args : iterable
+            Coordinate borders to use as filter (min lon, max lon, min lat, max lat).
+        inplace : bool
         kwargs
 
         Returns
@@ -430,28 +438,30 @@ class Kalkutun:
         else:
             raise AssertionError('Format of the data not recognized')
 
-        print("Retrieve polygons from dataset")
+        logging.debug("Retrieve polygons from dataset")
         polygons_array = self.get_polygons()
-        print(f"  Created {len(polygons_array)} polygons")
+        logging.debug(f"  Created {len(polygons_array)} polygons")
         df = create_geo_dataset(polygons_array, value=data, timestamp=time_utc)
 
         if drop_masked and np.ma.is_masked(data):
             df = df.iloc[~data.mask]
-            print(f"  Dropped masked to {len(df)} geometries")
+            logging.debug(f"  Dropped masked to {len(df)} geometries")
+            if len(df) == 0:
+                return df
 
         if drop_invalid or drop_poles or split_antimeridian:
             is_valid = shapely.is_valid(df['geometry'])
-            print(f"  Dropped {len(df)-is_valid.sum()} invalid geometries")
+            logging.debug(f"  Dropped {len(df)-is_valid.sum()} invalid geometries")
             df = df[is_valid]
 
         if drop_poles:
             over_pole = are_over_pole(df['geometry'], geod=geod, workers=workers)
-            print(f"  Dropped {over_pole.sum()} geometries over poles")
+            logging.debug(f"  Dropped {over_pole.sum()} geometries over poles")
             df = df[~over_pole]
 
         if split_antimeridian:
             df = split_anomaly_polygons(df, to_dataframe=True)
-            print(f"  Split into {len(df)} polygons")
+            logging.debug(f"  Split into {len(df)} polygons")
 
         return df.reset_index(drop=True)
 
@@ -547,6 +557,10 @@ class GridCrafter:
         if drop_negatives is True:
             df_obs = df_obs[df_obs['value'] > 0.0]
 
+        if len(df_obs) == 0:
+            logging.warning(f"    No polygons to regrid, returning None (might check masked data)")
+            return None
+
         if self.interpolation == 'weighted':
             regrid = weighted_regrid(
                 self.lons, self.lats, df_obs['geometry'], df_obs.drop('geometry', axis=1),
@@ -555,6 +569,7 @@ class GridCrafter:
         else:
             raise NotImplementedError('Interpolation type not implemented')
 
+        logging.debug(f"  Finished gridding of product ({regrid['value'].count()} valid values)")
         return regrid
 
 # =================================================================================

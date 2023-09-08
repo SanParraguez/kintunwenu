@@ -94,6 +94,8 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     # Calculate new values
     df_inter['inter_area'] = df_inter['inter_area'] / df_inter['area']
 
+    # ToDo: change to avoid datetime calculations and just use timestamp
+    #   this should increase performance
     to_datetime = []
     if isinstance(data, dict):
         for key, value in data.items():
@@ -127,7 +129,9 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     # Reshape to grid
     grid_values = {}
     for col in df_inter.drop('inter_area', axis=1):
-        grid_values[col.split('_')[-1]] = df_grid[col].to_numpy().reshape((len(grid_lat) - 1, len(grid_lon) - 1))
+        grid_values[col.split('_')[-1]] = np.ma.masked_invalid(
+            df_grid[col].to_numpy().reshape((len(grid_lat) - 1, len(grid_lon) - 1))
+        )
 
     return grid_values
 
@@ -202,8 +206,8 @@ def create_geo_grid(lons, lats, mode='corners'):
     )
 
     grid_shape = lons.shape
-    grid_xi = np.tile(np.arange(grid_shape[0] - 1), grid_shape[1] - 1)
-    grid_yi = np.arange(grid_shape[1] - 1).repeat(grid_shape[0] - 1)
+    grid_xi = np.tile(np.arange(grid_shape[1] - 1), grid_shape[0] - 1)
+    grid_yi = np.arange(grid_shape[0] - 1).repeat(grid_shape[1] - 1)
 
     df_grid = pd.DataFrame({
         'xi': grid_xi,
