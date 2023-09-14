@@ -37,8 +37,8 @@ def create_geo_dataset(geometries, **kwargs):
     ----------
     geometries : List[shapely.geometry.BaseGeometry]
         A list of Shapely Geometries objects representing geographical polygons.
-    kwargs : list or np.ndarray or pd.Series
-        Data to include in the DataFrame
+    kwargs :
+        Data to include in the DataFrame in list or np.ndarray or pd.Series.
 
     Returns
     -------
@@ -47,7 +47,13 @@ def create_geo_dataset(geometries, **kwargs):
         - 'geometry': The Shapely Polygon objects representing geographical polygons.
     """
     kwargs.update({'geometry': geometries})
-    df = pd.DataFrame(kwargs)
+    if np.asarray(geometries).ndim > 1:
+        df = [
+            pd.DataFrame({key: val.tolist() for key, val in zip(kwargs.keys(), value)})
+            for value in zip(*kwargs.values())
+        ]
+    else:
+        df = pd.DataFrame(kwargs)
     return df
 
 # =================================================================================

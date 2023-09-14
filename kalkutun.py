@@ -37,7 +37,7 @@ class Kalkutun:
     > TROPOMI
         - S5P_OFFL_L2__NO2
         - S5P_RPRO_L2__NO2
-        - IUP
+        - S5P TROPOMI/WFMD
 
     The class provides an interface to easily access and manipulate the product data. It also includes methods to
     convert units, retrieve polygon data, and create a dataframe of the polygon data.
@@ -102,17 +102,19 @@ class Kalkutun:
         NotImplementedError
             If the sensor is not supported.
         """
+        # New products should be added here as an 'if' condition.
+        # Ensure that every variable has dimensions (time, scanline, pixel, ...) so the gridding routines
+        #   can properly read and process the data.
+
         to_context = True
         if isinstance(dataset, (str, Path)):
             try:
                 dataset = Dataset(dataset)
             except OSError:
                 dataset = download_ncfile(dataset)
-            # else:
-            #     to_context = True
         elif isinstance(dataset, Dataset):
             # Do not close the dataset after reading, assuming that it could be used inside
-            # another with statement outside this class.
+            # another 'with' statement outside this class.
             to_context = False
         else:
             raise NotImplementedError('Kalkutun must be created from a path to file, an url or an actual Dataset')
@@ -129,10 +131,10 @@ class Kalkutun:
         self.qa_value = None
         self.time_utc = None
         self.format = None      # polygons, centers or corners
+        self.variables = {}
 
         # Initialize context to read values from dataset
         with dataset if to_context else nullcontext(dataset) as ds:
-
             # -----------------------------------------------
             #  General
             # -----------------------------------------------
@@ -165,19 +167,23 @@ class Kalkutun:
 
                 # Collect attributes
                 attrs = {
-                    'data': variables[product_name][0],
+                    'data': variables[product_name][:],
                     'units': standardise_unit_string(variables[product_name].units),
                     'product': product_name,
                     'tracer': id_tracer,
-                    'longitude': variables['longitude'][0],
-                    'latitude': variables['latitude'][0],
-                    'qa_value': variables['qa_value'][0],
-                    'time_utc': np.array(variables['time_utc'][0], dtype='datetime64[ns]'),
+                    'longitude': variables['longitude'][:],
+                    'latitude': variables['latitude'][:],
+                    'qa_value': variables['qa_value'][:],
+                    'time_utc': np.array(variables['time_utc'][:], dtype='datetime64[ns]'),
                     'format': 'centers',
                 }
 
+                self.variables.update({
+                    'avg_kernel': variables['averaging_kernel'][:],
+                })
+
             # -----------------------------------------------
-            #  TROPOMI IUP CH4/C0 L2
+            #  TROPOMI WFMD IUP CH4/C0 v1.8
             # -----------------------------------------------
             elif ds.title == 'TROPOMI/WFMD XCH4 and XCO':
 
@@ -211,6 +217,10 @@ class Kalkutun:
                     'time_utc': np.array(ds.variables['time'][:], dtype='datetime64[s]'),
                     'format': 'polygons',
                 }
+
+                self.variables.update({
+                    'avg_kernel': ds.variables[f'{tracer_name}_averaging_kernel'][:],
+                })
 
             # Product not recognized
             else:
@@ -396,27 +406,32 @@ class Kalkutun:
         if self.longitude_corners is not None and self.latitude_corners is not None:
             coords = np.moveaxis(np.asarray([self.longitude_corners, self.latitude_corners]), 0, -1)
         else:
-            coords = get_corners_from_grid(self.longitude, self.latitude, mode=self.format)
-
-        return shapely.polygons(coords)
+            coords = [get_corners_from_grid(lon, lat, mode=self.format) for lon, lat
+                      in zip(self.longitude, self.latitude)]
+        return [shapely.polygons(crds) for crds in coords]
 
     # -----------------------------------------------------------------------------
-    def get_polygon_dataframe(self, drop_masked=True, drop_invalid=True, split_antimeridian=True,
-                              drop_poles=False,
+    def get_polygon_dataframe(self, var_list=None, reset_index=True,
+                              split_antimeridian=True,
+                              drop_poles=False, drop_masked=True, drop_invalid=True,
                               workers=None, geod=None):
         """
         Generates a GeoDataFrame from the object coordinates and data.
 
         Parameters
         ----------
-        drop_masked : bool, optional
-            If True (default), drops any rows with masked values in the returned DataFrame.
-        drop_invalid : bool, optional
-            If True (default), drops all invalid geometries.
+        var_list : list
+            List of extra variables to be gridded
+        reset_index : bool, optional
+            Indicates if index should be reset before return or not.
         split_antimeridian : bool, optional
             If True (default), splits those polygons crossing the antimeridian.
         drop_poles : bool, optional
             If True, drops all geometries over the poles.
+        drop_masked : bool, optional
+            If True (default), drops any rows with masked values in the returned DataFrame.
+        drop_invalid : bool, optional
+            If True (default), drops all invalid geometries.
         workers : int, optional
             The number of worker processes to use for parallelization when checking geometries over the poles.
         geod : Geodesic, optional
@@ -430,48 +445,67 @@ class Kalkutun:
                 - 'value': The data values associated with each polygon.
                 - 'polygon': The Shapely Polygon objects representing geographical polygons.
         """
-        # ToDo: Add optional argument to get different variables in the dataframe
-        #   This will help to regrid, for instance, the averaging kernel
+        if var_list is None:
+            var_list = []
+        elif isinstance(var_list, str):
+            var_list = [var_list]
+
+        # ToDo: Check if this is still neccesary, might be better to just remove it
         if self.time_utc.ndim == self.data.ndim - 1:
             time_utc = np.repeat(self.time_utc[..., None], self.data.shape[-1], axis=-1)
         else:
             time_utc = self.time_utc
 
         if self.format == 'centers':
-            data = self.data[1:-1, 1:-1].flatten()
-            time_utc = time_utc[1:-1, 1:-1].flatten()
+            old_shape = self.data.shape
+            new_shape = (old_shape[0], (old_shape[1] - 2) * (old_shape[2] - 2), *old_shape[3:])
+            data = self.data[:, 1:-1, 1:-1].reshape(new_shape)
+            time_utc = time_utc[:, 1:-1, 1:-1].reshape(new_shape)
+            kw_vars = {}
+            for k in var_list:
+                if k in self.variables.keys():
+                    old_shape = self.variables[k].shape
+                    new_shape = (old_shape[0], (old_shape[1] - 2) * (old_shape[2] - 2), *old_shape[3:])
+                    kw_vars[k] = self.variables[k][:, 1:-1, 1:-1].reshape(new_shape)
+
         elif self.format in ['corners', 'polygons']:
-            data = self.data.flatten()
-            time_utc = time_utc.flatten()
+            old_shape = self.data.shape
+            new_shape = (old_shape[0], old_shape[1] * old_shape[2], *old_shape[3:])
+            data = self.data.reshape(new_shape)
+            time_utc = time_utc.reshape(new_shape)
+            kw_vars = {k: self.variables.get(k).reshape(new_shape) for k in var_list if k in self.variables.keys()}
         else:
             raise AssertionError('Format of the data not recognized')
 
         logging.debug("Retrieve polygons from dataset")
         polygons_array = self.get_polygons()
         logging.debug(f"  Created {len(polygons_array)} polygons")
-        df = create_geo_dataset(polygons_array, value=data, timestamp=time_utc)
+        df = create_geo_dataset(polygons_array, data=data, timestamp=time_utc, **kw_vars)
 
         if drop_masked and np.ma.is_masked(data):
-            df = df.iloc[~data.mask]
+            df = [df[i].iloc[~di.mask] for i, di in enumerate(data)]
             logging.debug(f"  Dropped masked to {len(df)} geometries")
             if len(df) == 0:
                 return df
 
         if drop_invalid or drop_poles or split_antimeridian:
-            is_valid = shapely.is_valid(df['geometry'])
-            logging.debug(f"  Dropped {len(df)-is_valid.sum()} invalid geometries")
-            df = df[is_valid]
+            is_valid = [shapely.is_valid(dfi['geometry']) for dfi in df]
+            logging.debug(f"  Dropped {np.sum([len(df[i])-is_valid[i].sum() for i in range(len(df))])} invalid geometries")
+            df = [dfi[is_valid[i]] for i, dfi in enumerate(df)]
 
         if drop_poles:
-            over_pole = are_over_pole(df['geometry'], geod=geod, workers=workers)
-            logging.debug(f"  Dropped {over_pole.sum()} geometries over poles")
-            df = df[~over_pole]
+            over_pole = [are_over_pole(dfi['geometry'], geod=geod, workers=workers) for dfi in df]
+            logging.debug(f"  Dropped {np.sum((opi.sum() for opi in over_pole))} geometries over poles")
+            df = [dfi[~over_pole[i]] for i, dfi in enumerate(df)]
 
         if split_antimeridian:
-            df = split_anomaly_polygons(df, to_dataframe=True)
+            df = [split_anomaly_polygons(dfi, to_dataframe=True) for dfi in df]
             logging.debug(f"  Split into {len(df)} polygons")
 
-        return df.reset_index(drop=True)
+        if reset_index:
+            df = [dfi.reset_index(drop=True) for dfi in df]
+
+        return df if len(df) > 1 else df[0]
 
 # =================================================================================
 
@@ -541,9 +575,10 @@ class GridCrafter:
         np.ndarray
             2D-array with the weighted values.
         """
-        drop_poles = kwargs.pop('drop_poles', False)
-
         kprod = product.copy() if isinstance(product, Kalkutun) else Kalkutun(product)
+
+        drop_poles = kwargs.pop('drop_poles', False)
+        var_list = kwargs.pop('var_list', list(kprod.variables.keys()))
 
         if coord_filter is not None:
             kprod.coordinates_filter(coord_filter, inplace=True)
@@ -559,11 +594,12 @@ class GridCrafter:
             kprod.qa_filter(self.qa_filter, inplace=True)
 
         df_obs = kprod.get_polygon_dataframe(
-            drop_masked=True, drop_invalid=True, drop_poles=drop_poles, split_antimeridian=True
+            var_list=var_list, drop_masked=True, drop_invalid=True,
+            drop_poles=drop_poles, split_antimeridian=True, reset_index=True
         )
 
         if drop_negatives is True:
-            df_obs = df_obs[df_obs['value'] > 0.0]
+            df_obs = df_obs[df_obs['data'] > 0.0]
 
         if len(df_obs) == 0:
             logging.warning(f"    No polygons to regrid, returning None (might check masked data)")
@@ -577,7 +613,7 @@ class GridCrafter:
         else:
             raise NotImplementedError('Interpolation type not implemented')
 
-        logging.debug(f"  Finished gridding of product ({regrid['value'].count()} valid values)")
+        logging.debug(f"  Finished gridding of product ({next(iter(regrid.values())).count()} valid values)")
         return regrid
 
 # =================================================================================
