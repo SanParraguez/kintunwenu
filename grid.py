@@ -44,7 +44,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
 
     Returns
     -------
-    np.ndarray
+    dict
         Regridded values with shape (i-1, j-1).
     """
     threads = kwargs.pop('threads', None)
@@ -71,7 +71,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     df_grid['area'] = df_grid[df_grid['xi'] == 0]['polygon'].map(
         lambda poly: geod.geometry_area_perimeter(poly)[0]
     )
-    df_grid['area'].fillna(method='ffill', inplace=True)
+    df_grid['area'].ffill(inplace=True)
 
     # ToDo: Implement KDtree and Rtree, check speeds.
     # Create and query STRtree
@@ -91,43 +91,66 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     # Calculate intersection areas (intersections are 'inverted' so we multiply by -1)
     df_inter['inter_area'] = -1 * get_areas(df_inter['polygon'], geod=geod, workers=workers)
 
-    # Calculate new values
+    # Calculate fraction of the cell covered by the intersected polygon
     df_inter['inter_area'] = df_inter['inter_area'] / df_inter['area']
 
+    # ToDo: change to avoid datetime calculations and just use timestamp in seconds since 1970
+    #   this should increase performance
     to_datetime = []
     if isinstance(data, dict):
         for key, value in data.items():
             if np.issubdtype(value.dtype, np.datetime64):
-                # np.array(0, dtype='datetime64[s]')
                 value = (value - datetime(1970, 1, 1)).dt.total_seconds()
                 to_datetime.append(key)
-            df_inter['data_'+key] = np.asarray(value)[inters[0]]
+            df_inter['var_'+key] = np.asarray(value)[inters[0]]
     else:
         df_inter['data'] = data[inters[0]]
 
     # Drop negative areas, undesired behaviour you will have
     df_inter = df_inter[df_inter['inter_area'] > 0.0]
 
-    for col in [col for col in df_inter.columns.to_list() if col[:4] == 'data']:
-        df_inter[col] = df_inter[col] * df_inter['inter_area']
+    # Calculate the weighted contribution (value * area_fraction)
+    for col in [col for col in df_inter if col.split('_')[0] == 'var']:
+        var_col = np.array(df_inter[col].to_list())
+        if var_col.ndim > 1:
+            df_inter[col] = [*(var_col * np.expand_dims(df_inter['inter_area'].to_numpy(),
+                                                        axis=tuple(range(1, var_col.ndim))))]
+        else:
+            df_inter[col] = var_col * df_inter['inter_area']
 
+    # Add up all the contributions per cell (now inter_area will be the total fraction of the cell covered)
+    #    groupby seems to work from pandas v2.0
     df_inter.reset_index(inplace=True)
     df_inter = df_inter.drop(['area', 'polygon'], axis=1).groupby('index').sum()
 
-    # Filter if min_fill
+    # Filter if min_fill is higher than the total area covered
     if min_fill is not None:
         df_inter = df_inter[df_inter['inter_area'] > min_fill]
 
+    # Divide by the area covered, since it could be a value different from 1 for not completely covered cells
     for col in [col for col in df_inter.drop('inter_area', axis=1)]:
         df_grid[col] = df_inter[col] / df_inter['inter_area']
 
-    for key in to_datetime:
-        df_grid['data_'+key] = np.array(df_grid['data_'+key], dtype='datetime64[s]')
-
-    # Reshape to grid
     grid_values = {}
     for col in df_inter.drop('inter_area', axis=1):
-        grid_values[col.split('_')[-1]] = df_grid[col].to_numpy().reshape((len(grid_lat) - 1, len(grid_lon) - 1))
+        # Try to get a numeric numpy array, if it fails because of combination of arrays and NaN values
+        # creates empty arrays to fill the gaps
+        try:
+            col_array = df_grid[col].to_numpy(float)
+        except ValueError:
+            emp_array = np.full(df_inter[col].iloc[0].shape, np.nan)
+            is_null = df_grid[col].isnull()
+            df_grid.loc[is_null, col] = pd.Series([emp_array] * is_null.sum()).to_numpy()
+            col_array = np.array(df_grid[col].to_list())
+
+        # Reshape to grid
+        grid_values['_'.join(col.split('_')[1:])] = np.ma.masked_invalid(
+            col_array.reshape((len(grid_lat) - 1, len(grid_lon) - 1) + col_array.shape[1:])
+        )
+
+    # As datetime variables
+    for key in to_datetime:
+        grid_values[key] = grid_values[key].astype('datetime64[s]')
 
     return grid_values
 
@@ -202,8 +225,8 @@ def create_geo_grid(lons, lats, mode='corners'):
     )
 
     grid_shape = lons.shape
-    grid_xi = np.tile(np.arange(grid_shape[0] - 1), grid_shape[1] - 1)
-    grid_yi = np.arange(grid_shape[1] - 1).repeat(grid_shape[0] - 1)
+    grid_xi = np.tile(np.arange(grid_shape[1] - 1), grid_shape[0] - 1)
+    grid_yi = np.arange(grid_shape[0] - 1).repeat(grid_shape[1] - 1)
 
     df_grid = pd.DataFrame({
         'xi': grid_xi,

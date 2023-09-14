@@ -14,9 +14,13 @@ __all__ = [
 ]
 
 # ============= IMPORTS ===============================
-import numpy as np
+import logging
 import shapely
+import numpy as np
+
+from contextlib import nullcontext
 from netCDF4 import Dataset
+from pathlib import Path
 from .geodata import create_geo_dataset, are_over_pole
 from .grid import create_grid, weighted_regrid
 from .polygons import get_corners_from_grid, split_anomaly_polygons
@@ -33,6 +37,7 @@ class Kalkutun:
     > TROPOMI
         - S5P_OFFL_L2__NO2
         - S5P_RPRO_L2__NO2
+        - S5P TROPOMI/WFMD
 
     The class provides an interface to easily access and manipulate the product data. It also includes methods to
     convert units, retrieve polygon data, and create a dataframe of the polygon data.
@@ -79,33 +84,40 @@ class Kalkutun:
     """
     __module__ = 'kintunwenu'
 
-    def __init__(self, dataset, tracer=None):
+    def __init__(self, dataset, tracer=None, kw_vars=None):
         """
         Initializes the Kalkutun object.
 
         Parameters
         ----------
-        dataset : netCDF4.Dataset
+        dataset : netCDF4.Dataset or string
             The netCDF4 dataset containing the product.
         tracer : string (optional)
             Indicates which tracer to retrieve in case the file contains more than one.
+        kw_vars : dict or list or tuple (optional)
+            If provided, it will iterate and get the specified variables from the dataset.
 
         Raises
         ------
         NotImplementedError
             If the sensor is not supported.
         """
-        if isinstance(dataset, Kalkutun):
-            # ToDo: handle case of Kalkutun given
-            raise NotImplementedError('Kalkutun must be created from a path to file, an url or an actual Dataset')
+        # New products should be added here as an 'if' condition.
+        # Ensure that every variable has dimensions (time, scanline, pixel, ...) so the gridding routines
+        #   can properly read and process the data.
 
-        # ToDo: properly close the file if an error arise
-        elif isinstance(dataset, str):
-            # ToDo: improve handling of string
+        to_context = True
+        if isinstance(dataset, (str, Path)):
             try:
                 dataset = Dataset(dataset)
             except OSError:
                 dataset = download_ncfile(dataset)
+        elif isinstance(dataset, Dataset):
+            # Do not close the dataset after reading, assuming that it could be used inside
+            # another 'with' statement outside this class.
+            to_context = False
+        else:
+            raise NotImplementedError('Kalkutun must be created from a path to file, an url or an actual Dataset')
 
         # Initialize class attributes
         self.data = np.ma.empty(0)
@@ -119,90 +131,101 @@ class Kalkutun:
         self.qa_value = None
         self.time_utc = None
         self.format = None      # polygons, centers or corners
+        self.variables = {}
 
-        # -----------------------------------------------
-        #  General
-        # -----------------------------------------------
-        # Attempt to retrieve id information from product
-        try:
-            self.id = dataset.id
-        except AttributeError:
-            raise NotImplementedError('Unable to retrieve id information from product.')
+        # Initialize context to read values from dataset
+        with dataset if to_context else nullcontext(dataset) as ds:
+            # -----------------------------------------------
+            #  General
+            # -----------------------------------------------
+            # Attempt to retrieve id information from product
+            try:
+                self.id = ds.id
+            except AttributeError:
+                raise NotImplementedError('Unable to retrieve id information from product.')
 
-        # Attempt to retrieve sensor information from product
-        try:
-            self.sensor = dataset.sensor.lower()
-        except AttributeError:
-            raise NotImplementedError('Unable to retrieve sensor information from product.')
+            # Attempt to retrieve sensor information from product
+            try:
+                self.sensor = ds.sensor.lower()
+            except AttributeError:
+                raise NotImplementedError('Unable to retrieve sensor information from product.')
 
-        # -----------------------------------------------
-        #  TROPOMI NO2 L2
-        # -----------------------------------------------
-        if 'TROPOMI/S5P NO2 1-Orbit L2 Swath' in dataset.title:
+            # -----------------------------------------------
+            #  TROPOMI NO2 L2
+            # -----------------------------------------------
+            if 'TROPOMI/S5P NO2 1-Orbit L2 Swath' in ds.title:
 
-            id_tracer = dataset.id.split('__')[1].upper()
-            if tracer and id_tracer != tracer.upper():
-                print(f'Warning: retrieved {id_tracer} but {tracer.upper()} was given.')
+                id_tracer = ds.id.split('__')[1].upper()
+                if tracer and id_tracer != tracer.upper():
+                    logging.info(f'Warning: retrieved {id_tracer} but {tracer.upper()} was given.')
 
-            # Retrieve attributes from variables in product
-            variables = dataset.groups['PRODUCT'].variables
-            product_name = [key for key in variables.keys() if key.endswith('_column')]
-            product_name = product_name[0] if len(product_name) == 1 \
-                else AttributeError('Found more tan one column in data')
+                # Retrieve attributes from variables in product
+                variables = ds.groups['PRODUCT'].variables
+                product_name = [key for key in variables.keys() if key.endswith('_column')]
+                product_name = product_name[0] if len(product_name) == 1 \
+                    else AttributeError('Found more tan one column in data')
 
-            # Collect attributes
-            attrs = {
-                'data': variables[product_name][0],
-                'units': standardise_unit_string(variables[product_name].units),
-                'product': product_name,
-                'tracer': id_tracer,
-                'longitude': variables['longitude'][0],
-                'latitude': variables['latitude'][0],
-                'qa_value': variables['qa_value'][0],
-                'time_utc': np.array(variables['time_utc'][0], dtype='datetime64[ns]'),
-                'format': 'centers',
-            }
+                # Collect attributes
+                attrs = {
+                    'data': variables[product_name][:],
+                    'units': standardise_unit_string(variables[product_name].units),
+                    'product': product_name,
+                    'tracer': id_tracer,
+                    'longitude': variables['longitude'][:],
+                    'latitude': variables['latitude'][:],
+                    'qa_value': variables['qa_value'][:],
+                    'time_utc': np.array(variables['time_utc'][:], dtype='datetime64[ns]'),
+                    'format': 'centers',
+                }
 
-        # -----------------------------------------------
-        #  TROPOMI IUP CH4/C0 L2
-        # -----------------------------------------------
-        elif dataset.title == 'TROPOMI/WFMD XCH4 and XCO':
+                self.variables.update({
+                    'avg_kernel': variables['averaging_kernel'][:],
+                })
 
-            # Check if tracer is provided
-            if tracer is None:
-                raise AssertionError('Given dataset contains both CH4 and CO data, a tracer has to be provided.')
+            # -----------------------------------------------
+            #  TROPOMI WFMD IUP CH4/C0 v1.8
+            # -----------------------------------------------
+            elif ds.title == 'TROPOMI/WFMD XCH4 and XCO':
+
+                # Check if tracer is provided
+                if tracer is None:
+                    raise AssertionError('Given dataset contains both CH4 and CO data, a tracer has to be provided.')
+                else:
+                    tracer = tracer.upper()
+
+                # Get product based on tracer
+                if tracer == 'CH4':
+                    tracer_name = 'xch4'
+                    product_name = ds.variables[tracer_name].standard_name
+                elif tracer == 'CO':
+                    tracer_name = 'xco'
+                    product_name = 'dry_atmosphere_mole_fraction_of_carbon_monoxide'
+                else:
+                    raise AttributeError(f'Tracer provided {tracer} not found in dataset')
+
+                # Collect attributes
+                attrs = {
+                    'data': ds.variables[tracer_name][:],
+                    'units': standardise_unit_string(ds.variables[tracer_name].units),
+                    'product': product_name,
+                    'tracer': tracer,
+                    'longitude': ds.variables['longitude'][:],
+                    'latitude': ds.variables['latitude'][:],
+                    'longitude_corners': ds.variables['longitude_corners'][:],
+                    'latitude_corners': ds.variables['latitude_corners'][:],
+                    'qa_value': ds.variables[f'{tracer_name}_quality_flag'][:],
+                    'time_utc': np.array(ds.variables['time'][:], dtype='datetime64[s]'),
+                    'format': 'polygons',
+                }
+
+                self.variables.update({
+                    'avg_kernel': ds.variables[f'{tracer_name}_averaging_kernel'][:],
+                })
+
+            # Product not recognized
             else:
-                tracer = tracer.upper()
-
-            # Get product based on tracer
-            if tracer == 'CH4':
-                tracer_name = 'xch4'
-                product_name = dataset.variables[tracer_name].standard_name
-            elif tracer == 'CO':
-                tracer_name = 'xco'
-                product_name = 'dry_atmosphere_mole_fraction_of_carbon_monoxide'
-            else:
-                raise AttributeError(f'Tracer provided {tracer} not found in dataset')
-
-            # Collect attributes
-            attrs = {
-                'data': dataset.variables[tracer_name][:],
-                'units': standardise_unit_string(dataset.variables[tracer_name].units),
-                'product': product_name,
-                'tracer': tracer,
-                'longitude': dataset.variables['longitude'][:],
-                'latitude': dataset.variables['latitude'][:],
-                'longitude_corners': dataset.variables['longitude_corners'][:],
-                'latitude_corners': dataset.variables['latitude_corners'][:],
-                'qa_value': dataset.variables[f'{tracer_name}_quality_flag'][:],
-                'time_utc': np.array(dataset.variables['time'][:], dtype='datetime64[s]'),
-                'format': 'polygons',
-            }
-
-        # Product not recognized
-        else:
-            raise NotImplementedError(f"Product '{dataset.title}' has not been implemented.")
-        # -----------------------------------------------
+                raise NotImplementedError(f"Product '{ds.title}' has not been implemented.")
+            # -----------------------------------------------
 
         # Set attributes
         for key, value in attrs.items():
@@ -308,7 +331,7 @@ class Kalkutun:
             None otherwise.
         """
         if (self.qa_value == 0.0).all():
-            print('Warning: Product seems to not have any valid quality value')
+            logging.info('Warning: Product seems to not have any valid quality value')
             return self.data if not inplace else None
         if inplace:
             self.data = np.ma.masked_where(self.qa_value < min_value, self.data)
@@ -321,8 +344,9 @@ class Kalkutun:
 
         Parameters
         ----------
-        args
-        inplace
+        args : iterable
+            Coordinate borders to use as filter (min lon, max lon, min lat, max lat).
+        inplace : bool
         kwargs
 
         Returns
@@ -382,27 +406,32 @@ class Kalkutun:
         if self.longitude_corners is not None and self.latitude_corners is not None:
             coords = np.moveaxis(np.asarray([self.longitude_corners, self.latitude_corners]), 0, -1)
         else:
-            coords = get_corners_from_grid(self.longitude, self.latitude, mode=self.format)
-
-        return shapely.polygons(coords)
+            coords = [get_corners_from_grid(lon, lat, mode=self.format) for lon, lat
+                      in zip(self.longitude, self.latitude)]
+        return [shapely.polygons(crds) for crds in coords]
 
     # -----------------------------------------------------------------------------
-    def get_polygon_dataframe(self, drop_masked=True, drop_invalid=True, split_antimeridian=True,
-                              drop_poles=False,
+    def get_polygon_dataframe(self, var_list=None, reset_index=True,
+                              split_antimeridian=True,
+                              drop_poles=False, drop_masked=True, drop_invalid=True,
                               workers=None, geod=None):
         """
         Generates a GeoDataFrame from the object coordinates and data.
 
         Parameters
         ----------
-        drop_masked : bool, optional
-            If True (default), drops any rows with masked values in the returned DataFrame.
-        drop_invalid : bool, optional
-            If True (default), drops all invalid geometries.
+        var_list : list
+            List of extra variables to be gridded
+        reset_index : bool, optional
+            Indicates if index should be reset before return or not.
         split_antimeridian : bool, optional
             If True (default), splits those polygons crossing the antimeridian.
         drop_poles : bool, optional
             If True, drops all geometries over the poles.
+        drop_masked : bool, optional
+            If True (default), drops any rows with masked values in the returned DataFrame.
+        drop_invalid : bool, optional
+            If True (default), drops all invalid geometries.
         workers : int, optional
             The number of worker processes to use for parallelization when checking geometries over the poles.
         geod : Geodesic, optional
@@ -416,44 +445,67 @@ class Kalkutun:
                 - 'value': The data values associated with each polygon.
                 - 'polygon': The Shapely Polygon objects representing geographical polygons.
         """
+        if var_list is None:
+            var_list = []
+        elif isinstance(var_list, str):
+            var_list = [var_list]
+
+        # ToDo: Check if this is still neccesary, might be better to just remove it
         if self.time_utc.ndim == self.data.ndim - 1:
             time_utc = np.repeat(self.time_utc[..., None], self.data.shape[-1], axis=-1)
         else:
             time_utc = self.time_utc
 
         if self.format == 'centers':
-            data = self.data[1:-1, 1:-1].flatten()
-            time_utc = time_utc[1:-1, 1:-1].flatten()
+            old_shape = self.data.shape
+            new_shape = (old_shape[0], (old_shape[1] - 2) * (old_shape[2] - 2), *old_shape[3:])
+            data = self.data[:, 1:-1, 1:-1].reshape(new_shape)
+            time_utc = time_utc[:, 1:-1, 1:-1].reshape(new_shape)
+            kw_vars = {}
+            for k in var_list:
+                if k in self.variables.keys():
+                    old_shape = self.variables[k].shape
+                    new_shape = (old_shape[0], (old_shape[1] - 2) * (old_shape[2] - 2), *old_shape[3:])
+                    kw_vars[k] = self.variables[k][:, 1:-1, 1:-1].reshape(new_shape)
+
         elif self.format in ['corners', 'polygons']:
-            data = self.data.flatten()
-            time_utc = time_utc.flatten()
+            old_shape = self.data.shape
+            new_shape = (old_shape[0], old_shape[1] * old_shape[2], *old_shape[3:])
+            data = self.data.reshape(new_shape)
+            time_utc = time_utc.reshape(new_shape)
+            kw_vars = {k: self.variables.get(k).reshape(new_shape) for k in var_list if k in self.variables.keys()}
         else:
             raise AssertionError('Format of the data not recognized')
 
-        print("Retrieve polygons from dataset")
+        logging.debug("Retrieve polygons from dataset")
         polygons_array = self.get_polygons()
-        print(f"  Created {len(polygons_array)} polygons")
-        df = create_geo_dataset(polygons_array, value=data, timestamp=time_utc)
+        logging.debug(f"  Created {len(polygons_array)} polygons")
+        df = create_geo_dataset(polygons_array, data=data, timestamp=time_utc, **kw_vars)
 
         if drop_masked and np.ma.is_masked(data):
-            df = df.iloc[~data.mask]
-            print(f"  Dropped masked to {len(df)} geometries")
+            df = [df[i].iloc[~di.mask] for i, di in enumerate(data)]
+            logging.debug(f"  Dropped masked to {len(df)} geometries")
+            if len(df) == 0:
+                return df
 
         if drop_invalid or drop_poles or split_antimeridian:
-            is_valid = shapely.is_valid(df['geometry'])
-            print(f"  Dropped {len(df)-is_valid.sum()} invalid geometries")
-            df = df[is_valid]
+            is_valid = [shapely.is_valid(dfi['geometry']) for dfi in df]
+            logging.debug(f"  Dropped {np.sum([len(df[i])-is_valid[i].sum() for i in range(len(df))])} invalid geometries")
+            df = [dfi[is_valid[i]] for i, dfi in enumerate(df)]
 
         if drop_poles:
-            over_pole = are_over_pole(df['geometry'], geod=geod, workers=workers)
-            print(f"  Dropped {over_pole.sum()} geometries over poles")
-            df = df[~over_pole]
+            over_pole = [are_over_pole(dfi['geometry'], geod=geod, workers=workers) for dfi in df]
+            logging.debug(f"  Dropped {np.sum((opi.sum() for opi in over_pole))} geometries over poles")
+            df = [dfi[~over_pole[i]] for i, dfi in enumerate(df)]
 
         if split_antimeridian:
-            df = split_anomaly_polygons(df, to_dataframe=True)
-            print(f"  Split into {len(df)} polygons")
+            df = [split_anomaly_polygons(dfi, to_dataframe=True) for dfi in df]
+            logging.debug(f"  Split into {len(df)} polygons")
 
-        return df.reset_index(drop=True)
+        if reset_index:
+            df = [dfi.reset_index(drop=True) for dfi in df]
+
+        return df if len(df) > 1 else df[0]
 
 # =================================================================================
 
@@ -523,9 +575,10 @@ class GridCrafter:
         np.ndarray
             2D-array with the weighted values.
         """
-        drop_poles = kwargs.pop('drop_poles', False)
-
         kprod = product.copy() if isinstance(product, Kalkutun) else Kalkutun(product)
+
+        drop_poles = kwargs.pop('drop_poles', False)
+        var_list = kwargs.pop('var_list', list(kprod.variables.keys()))
 
         if coord_filter is not None:
             kprod.coordinates_filter(coord_filter, inplace=True)
@@ -541,11 +594,16 @@ class GridCrafter:
             kprod.qa_filter(self.qa_filter, inplace=True)
 
         df_obs = kprod.get_polygon_dataframe(
-            drop_masked=True, drop_invalid=True, drop_poles=drop_poles, split_antimeridian=True
+            var_list=var_list, drop_masked=True, drop_invalid=True,
+            drop_poles=drop_poles, split_antimeridian=True, reset_index=True
         )
 
         if drop_negatives is True:
-            df_obs = df_obs[df_obs['value'] > 0.0]
+            df_obs = df_obs[df_obs['data'] > 0.0]
+
+        if len(df_obs) == 0:
+            logging.warning(f"    No polygons to regrid, returning None (might check masked data)")
+            return None
 
         if self.interpolation == 'weighted':
             regrid = weighted_regrid(
@@ -555,6 +613,7 @@ class GridCrafter:
         else:
             raise NotImplementedError('Interpolation type not implemented')
 
+        logging.debug(f"  Finished gridding of product ({next(iter(regrid.values())).count()} valid values)")
         return regrid
 
 # =================================================================================
