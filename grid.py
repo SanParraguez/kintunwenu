@@ -29,9 +29,9 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     Parameters
     ----------
     grid_lon : np.ndarray, shape (j,)
-        Gridded longitudes.
+        Gridded longitudes corners.
     grid_lat : np.ndarray, shape (i,)
-        Gridded latitudes.
+        Gridded latitudes corners.
     polygons : list or pd.Series or np.ndarray of Polygon, len (n)
         The n polygons to be regridded.
     data : list or pd.Series or np.ndarray or dict or pd.DataFrame, shape (n,)
@@ -66,6 +66,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
         assert 0.0 < min_fill < 1.0, f"Minimum fill value has to be a fraction, {min_fill} not valid."
 
     df_grid = create_geo_grid(grid_lon, grid_lat, mode='corners')
+    grid_shape = tuple(dim-1 for dim in grid_lon.shape) if grid_lon.ndim > 1 else (grid_lat.shape[0], grid_lon.shape[0])
 
     # Get areas for single column and fill through longitudes
     df_grid['area'] = df_grid[df_grid['xi'] == 0]['polygon'].map(
@@ -145,7 +146,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
 
         # Reshape to grid
         grid_values['_'.join(col.split('_')[1:])] = np.ma.masked_invalid(
-            col_array.reshape((len(grid_lat) - 1, len(grid_lon) - 1) + col_array.shape[1:])
+            col_array.reshape(grid_shape + col_array.shape[1:])
         )
 
     # As datetime variables
