@@ -157,32 +157,41 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
 
 # =================================================================================
 
-def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90)):
+def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corners'):
     """
-    Creates equally spaced grid points.
+    Creates equally spaced grid cells.
 
     Parameters
     ----------
-    grid_size : float or tuple
-        Size of the grid cells, if a float is given it will assume regular grid
-    lon_lim : tuple
-        Longitude limits of the grid, included
-    lat_lim : tuple
-        Latitude limits of the grid, included
+    grid_size : float or tuple[float, float]
+        Size of the grid cells, if a float is given it will assume regular grid.
+    lon_lim : tuple[float, float]
+        Longitude limits of the grid, included.
+    lat_lim : tuple[float, float]
+        Latitude limits of the grid, included.
+    method : str
+        Indicates if the points are the corners or the centers of the grid. Default: 'corners'.
 
     Returns
     -------
-    Tuple of np.ndarray
+    tuple[np.ndarray, np.ndarray]
+        A tuple with (lons, lats) 1D arrays.
     """
     if isinstance(grid_size, (float, int)):
         grid_size = (grid_size, grid_size)
     else:
         grid_size = tuple(grid_size)
 
-    nlon = int((lon_lim[1] - lon_lim[0]) / grid_size[0])
-    nlat = int((lat_lim[1] - lat_lim[0]) / grid_size[1])
-    grid_lon = np.linspace(*lon_lim, num=nlon + 1, endpoint=True)
-    grid_lat = np.linspace(*lat_lim, num=nlat + 1, endpoint=True)
+    if len(lon_lim) != 2 or len(lat_lim) != 2:
+        raise AssertionError('Both lon and lat limits have to be tuples with two elements.')
+
+    if method == 'corners':
+        nlon = int((lon_lim[1] - lon_lim[0]) / grid_size[0])
+        nlat = int((lat_lim[1] - lat_lim[0]) / grid_size[1])
+        grid_lon = np.linspace(*lon_lim, num=nlon + 1, endpoint=True)
+        grid_lat = np.linspace(*lat_lim, num=nlat + 1, endpoint=True)
+    else:
+        raise NotImplementedError(f"Method 'centers' not implemented, desirable")
 
     return grid_lon, grid_lat
 

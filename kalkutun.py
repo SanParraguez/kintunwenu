@@ -519,42 +519,93 @@ class GridCrafter:
     """
     Adapting data to its new grid like a master of disguise.
     Basically, just creates a regular grid, further capabilities are desired.
+
+    Parameters
+    ----------
+    longitudes, latitudes : np.ndarray
+        Grid corners to be used.
+    interpolation : str
+        Method of interpolation to be used.
+    min_fill : float
+        Fraction of the grid cell that has to be filled to be valid. If not provided, 0.0 by default.
+    qa_filter : float
+        Minimum value of the quality flag necessary to consider that measurement.
+    units : str
+        Desired output units of the main data of the product. It will try to convert both the data and its
+        standard deviation.
+    geod : pyproj.Geod
+        Geodetic object to be used for calculating areas of cells. Assumes Earth if none is provided.
     """
     __module__ = 'kintunwenu'
 
     def __init__(
             self,
-            coordinates=(-180, 180, -90, 90),
-            resolution=(6, 4),
+            grid_lons, grid_lats,
             interpolation='weighted',
-            min_fill=None,
+            min_fill=None, qa_filter=None,
+            units=None, geod=None,
             **kwargs
     ):
-
-        if len(coordinates) != 4:
-            raise AssertionError(f'An iterable with 4 values must be given for '
-                                 f'coordinates limits ({len(coordinates)} given).')
-        if (coordinates[1] <= coordinates[0]) or (coordinates[3] <= coordinates[2]):
-            raise AssertionError(f'Coordinates must be ordered, with longitudes first and latitudes last.')
-        self.lon_lim = tuple(coordinates[:2])
-        self.lat_lim = tuple(coordinates[2:])
-
-        self.grid_resolution = (resolution, resolution) if isinstance(resolution, (float, int)) else tuple(resolution)
-        if (self.grid_resolution[0] <= 0) or (self.grid_resolution[1] <= 0):
-            raise AssertionError('Given grid resolution must be greater than 0.')
+        self.lon_lim = np.min(grid_lons), np.max(grid_lons)
+        self.lat_lim = np.min(grid_lats), np.max(grid_lats)
 
         if interpolation in ['weighted']:
             self.interpolation = interpolation
         else:
-            raise AssertionError('Interpolation method must be "weighted".')
+            raise AssertionError("Interpolation method must be 'weighted'.")
 
         self.min_fill = min_fill
-        self.units = kwargs.pop('units', None)
-        self.geod = kwargs.pop('geod', None)
-        self.qa_filter = kwargs.pop('qa_filter', None)
+        self.units = units
+        self.geod = geod
+        self.qa_filter = qa_filter
+        self.lat_filter = kwargs.pop('lat_filter', None)
 
-        # Create coordinate grids
-        self.lons, self.lats = create_grid(resolution, coordinates[0:2], coordinates[2:4])
+        self.lons, self.lats = np.asarray(grid_lons), np.asarray(grid_lats)
+
+        if self.lons.ndim != self.lats.ndim:
+            raise ValueError(f"Grid dimensions have to be the same for latitudes and longitudes")
+        if self.lons.ndim > 2 or self.lats.ndim > 2:
+            raise ValueError(f"Grid dimensions must be 1 or 2, not {self.lons.ndim}")
+        if self.lons.ndim == 2:
+            if self.lons.shape != self.lats.shape:
+                raise ValueError(f"Grid longitudes and latitudes must have same shape. "
+                                 f"({self.lons.shape}) and ({self.lats.shape}) found.")
+
+    # -----------------------------------------------------------------------------
+    @classmethod
+    def from_grid(cls, grid_lons, grid_lats, **kwargs):
+        """
+        Creates an instance of GridCrafter but providing a grid.
+        Useful for non-monotonous grids.
+
+        Parameters
+        ----------
+        grid_lons, grid_lats : np.ndarray
+            Grid corners to be used.
+        """
+        return cls(grid_lons, grid_lats, **kwargs)
+
+    # -----------------------------------------------------------------------------
+    @classmethod
+    def from_size(cls, grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corners', **kwargs):
+        """
+        Creates an instance of GridCrafter but providing coordinates and a grid resolution.
+        Useful for monotonous grids.
+
+        Parameters
+        ----------
+        grid_size : float or tuple[float, float]
+            Size of the grid cells, if a float is given it will assume regular grid.
+        lon_lim : tuple[float, float]
+            Longitude limits of the grid, included.
+        lat_lim : tuple[float, float]
+            Latitude limits of the grid, included.
+        method : str
+            Indicates if the points are the corners or the centers of the grid. Default: 'corners'.
+        """
+        grid_lons, grid_lats = create_grid(grid_size, lon_lim, lat_lim, method)
+
+        return cls(grid_lons, grid_lats, **kwargs)
 
     # -----------------------------------------------------------------------------
     def __call__(self, *args, **kwargs):
