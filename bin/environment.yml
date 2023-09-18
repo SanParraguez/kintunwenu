@@ -163,4 +163,3 @@ dependencies:
       - stack-data==0.2.0
       - toml==0.10.2
       - wcwidth==0.2.5
-prefix: /home/sanparra/.conda/envs/ktw
