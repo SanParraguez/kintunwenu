@@ -171,6 +171,13 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
     except ValueError:
         pass
 
+    # Return if no coords are found, this could be hiding errors
+    if not coords.any():
+        if to_dataframe:
+            return create_geo_dataset(polygons)
+        else:
+            return polygons, data if data is not None else polygons
+
     # ---------- Get new polygons ----------
     if isinstance(coords, np.ndarray):
 

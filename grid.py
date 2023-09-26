@@ -66,7 +66,10 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
         assert 0.0 < min_fill < 1.0, f"Minimum fill value has to be a fraction, {min_fill} not valid."
 
     df_grid = create_geo_grid(grid_lon, grid_lat, mode='corners')
-    grid_shape = tuple(dim-1 for dim in grid_lon.shape) if grid_lon.ndim > 1 else (grid_lat.shape[0], grid_lon.shape[0])
+    if grid_lon.ndim > 1:
+        grid_shape = tuple(dim-1 for dim in grid_lon.shape)
+    else:
+        grid_shape = (grid_lat.shape[0]-1, grid_lon.shape[0]-1)
 
     # Get areas for single column and fill through longitudes
     df_grid['area'] = df_grid[df_grid['xi'] == 0]['polygon'].map(

@@ -312,10 +312,14 @@ class Kalkutun:
         """
         to_unit = standardise_unit_string(to_unit)
         self.data = convert_units(self.data, from_unit=self.units, to_unit=to_unit, species=self.tracer)
+
+        if not var_list: var_list = []
         for var in var_list:
             self.variables[var] = convert_units(self.variables[var], from_unit=self.units,
                                                 to_unit=to_unit, species=self.tracer)
+
         self.units = to_unit
+
         return
 
     # -----------------------------------------------------------------------------
