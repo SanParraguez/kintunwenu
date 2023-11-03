@@ -194,7 +194,7 @@ def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corne
         grid_lon = np.linspace(*lon_lim, num=nlon + 1, endpoint=True)
         grid_lat = np.linspace(*lat_lim, num=nlat + 1, endpoint=True)
     else:
-        raise NotImplementedError(f"Method 'centers' not implemented, desirable")
+        raise NotImplementedError(f"Method '{method}' not implemented, desirable")
 
     return grid_lon, grid_lat
 

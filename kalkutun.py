@@ -663,7 +663,7 @@ class GridCrafter:
             df_obs = df_obs[df_obs['data'] > 0.0]
 
         if len(df_obs) == 0:
-            logging.warning(f"    No polygons to regrid, returning None (might check masked data)")
+            logging.warning(f"    No polygons to regrid for {product}, returning None (might check masked data)")
             return None
 
         if self.interpolation == 'weighted':
