@@ -413,6 +413,8 @@ class Kalkutun:
         np.ndarray
             An array of Polygon objects created from the product's longitude and latitude.
         """
+        # ToDo: check why is necessary to return a list with arrays and not just a single list with
+        #   polygons to be processed.
         if self.longitude_corners is not None and self.latitude_corners is not None:
             coords = np.moveaxis(np.asarray([self.longitude_corners, self.latitude_corners]), 0, -1)
         else:
