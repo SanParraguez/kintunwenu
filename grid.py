@@ -13,6 +13,7 @@ __all__ = [
 ]
 
 # === IMPORTS =========================================================
+import logging
 import numpy as np
 import pandas as pd
 import shapely
@@ -130,6 +131,11 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     # Filter if min_fill is higher than the total area covered
     if min_fill is not None:
         df_inter = df_inter[df_inter['inter_area'] > min_fill]
+
+    # In case of empty DataFrame, just return None
+    if len(df_inter) == 0:
+        logging.warning(f"    Regridding ended up empty, returning 'None' (might check masked data)")
+        return None
 
     # Divide by the area covered, since it could be a value different from 1 for not completely covered cells
     for col in [col for col in df_inter.drop('inter_area', axis=1)]:

@@ -673,6 +673,9 @@ class GridCrafter:
                 self.lons, self.lats, df_obs['geometry'], df_obs.drop('geometry', axis=1),
                 min_fill=self.min_fill, geod=self.geod, **kwargs
             )
+            if not regrid:
+                logging.warning(f"    No cell filled for {product}, returning None (might check masked data)")
+                return None
         else:
             raise NotImplementedError('Interpolation type not implemented')
 
