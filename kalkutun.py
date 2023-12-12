@@ -132,6 +132,7 @@ class Kalkutun:
         self.time_utc = None
         self.format = None      # polygons, centers or corners
         self.variables = {}
+        self.support = None
 
         # Initialize context to read values from dataset
         with dataset if to_context else nullcontext(dataset) as ds:
@@ -181,7 +182,15 @@ class Kalkutun:
                 self.variables.update({
                     'avg_kernel': variables['averaging_kernel'][:],
                     'std_deviation': variables[product_name+'_precision'][:],
+                    'surface_pressure': ds.groups['PRODUCT'].groups['SUPPORT_DATA'].groups[
+                        'INPUT_DATA'].variables['surface_pressure'][:],
+                    'tm5_tropopause_layer_index': variables['tm5_tropopause_layer_index'][:],
                 })
+
+                self.suppport = {
+                    'tm5_constant_a': variables['tm5_constant_a'][:],
+                    'tm5_constant_b': variables['tm5_constant_b'][:],
+                }
 
             # -----------------------------------------------
             #  TROPOMI WFMD IUP CH4/C0 v1.8

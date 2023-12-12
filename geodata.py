@@ -50,7 +50,7 @@ def create_geo_dataset(geometries, **kwargs):
 
     # Not completely sure about the need of this case.
     if np.asarray(geometries).ndim > 1:
-        print(f"create_geo_dataset: got weird case of geometries.ndim > 1")
+        # print(f"create_geo_dataset: got weird case of geometries.ndim > 1")
         df = [
             pd.DataFrame({key: val.tolist() for key, val in zip(kwargs.keys(), value)})
             for value in zip(*kwargs.values())
