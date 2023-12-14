@@ -132,7 +132,7 @@ class Kalkutun:
         self.time_utc = None
         self.format = None      # polygons, centers or corners
         self.variables = {}
-        self.support = None
+        self.support = {}
 
         # Initialize context to read values from dataset
         with dataset if to_context else nullcontext(dataset) as ds:
@@ -180,17 +180,44 @@ class Kalkutun:
                 }
 
                 self.variables.update({
-                    'avg_kernel': variables['averaging_kernel'][:],
-                    'std_deviation': variables[product_name+'_precision'][:],
-                    'surface_pressure': ds.groups['PRODUCT'].groups['SUPPORT_DATA'].groups[
-                        'INPUT_DATA'].variables['surface_pressure'][:],
-                    'tm5_tropopause_layer_index': variables['tm5_tropopause_layer_index'][:],
+                    'nitrogendioxide_tropospheric_column_precision': variables[product_name+'_precision'][:],
+                })
+                
+                # Get support variables
+                avg_kernel = variables['averaging_kernel'][:]
+                surface_pressure = ds.groups['PRODUCT'].groups['SUPPORT_DATA'].groups['INPUT_DATA'].variables['surface_pressure'][:]
+                const_a = variables['tm5_constant_a'][:]
+                const_b = variables['tm5_constant_b'][:]
+                tropo_layer_index = variables['tm5_tropopause_layer_index'][:]                    
+                air_mass_troposphere = variables['air_mass_factor_troposphere'][:]
+                air_mass_total = variables['air_mass_factor_total'][:]
+       
+                const_a = np.concatenate([const_a[:, 0], const_a[-1:, 1]])
+                const_b = np.concatenate([const_b[:, 0], const_b[-1:, 1]])
+
+                self.support.update({
+                    'surface_pressure': surface_pressure,
+                    'tm5_constant_a': const_a,
+                    'tm5_constant_b': const_b,
+                    'tm5_tropopause_layer_index': tropo_layer_index,
+                    'air_mass_troposphere': air_mass_troposphere,
+                    'air_mass_total': air_mass_total,
+                    'avg_kernel': avg_kernel,
                 })
 
-                self.suppport = {
-                    'tm5_constant_a': variables['tm5_constant_a'][:],
-                    'tm5_constant_b': variables['tm5_constant_b'][:],
-                }
+                # Calculate and include half level pressures (nlayers + 1)
+                hlevp = const_a[None, None, None, :] + const_b[None, None, None, :] * surface_pressure[..., None]
+                self.variables['hlevel_pressure'] = hlevp
+
+                # Calculate troposphere mask
+                troposphere_mask = np.ones(avg_kernel.shape)
+                for i in range(troposphere_mask.shape[-1]):
+                    troposphere_mask[..., i][i > tropo_layer_index] = 0
+
+                # Calculate tropospheric averaging kernel
+                tropo_avg_kernel = troposphere_mask * avg_kernel * air_mass_total[..., None] / air_mass_troposphere[..., None]
+                self.variables['tropo_avg_kernel'] = tropo_avg_kernel
+
 
             # -----------------------------------------------
             #  TROPOMI WFMD IUP CH4/C0 v1.8
