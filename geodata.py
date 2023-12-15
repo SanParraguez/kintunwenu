@@ -52,8 +52,11 @@ def create_geo_dataset(geometries, **kwargs):
             pd.DataFrame({key: val.tolist() for key, val in zip(kwargs.keys(), value)})
             for value in zip(*kwargs.values())
         ]
-    else:
-        df = pd.DataFrame(kwargs)
+        return df
+
+    # Create DataFrame with every variable assigned to its geometry
+    #   v.tolist() trick avoids error when n-dimensional arrays stored in pandas.
+    df = pd.DataFrame({k: v.tolist() for k, v in kwargs.items()})
     return df
 
 # =================================================================================
