@@ -13,6 +13,7 @@ __all__ = [
 ]
 
 # === IMPORTS =========================================================
+import logging
 import numpy as np
 import pandas as pd
 import shapely
@@ -29,9 +30,9 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     Parameters
     ----------
     grid_lon : np.ndarray, shape (j,)
-        Gridded longitudes.
+        Gridded longitudes corners.
     grid_lat : np.ndarray, shape (i,)
-        Gridded latitudes.
+        Gridded latitudes corners.
     polygons : list or pd.Series or np.ndarray of Polygon, len (n)
         The n polygons to be regridded.
     data : list or pd.Series or np.ndarray or dict or pd.DataFrame, shape (n,)
@@ -66,6 +67,10 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
         assert 0.0 < min_fill < 1.0, f"Minimum fill value has to be a fraction, {min_fill} not valid."
 
     df_grid = create_geo_grid(grid_lon, grid_lat, mode='corners')
+    if grid_lon.ndim > 1:
+        grid_shape = tuple(dim-1 for dim in grid_lon.shape)
+    else:
+        grid_shape = (grid_lat.shape[0]-1, grid_lon.shape[0]-1)
 
     # Get areas for single column and fill through longitudes
     df_grid['area'] = df_grid[df_grid['xi'] == 0]['polygon'].map(
@@ -127,6 +132,11 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     if min_fill is not None:
         df_inter = df_inter[df_inter['inter_area'] > min_fill]
 
+    # In case of empty DataFrame, just return None
+    if len(df_inter) == 0:
+        logging.warning(f"    Regridding ended up empty, returning 'None' (might check masked data)")
+        return None
+
     # Divide by the area covered, since it could be a value different from 1 for not completely covered cells
     for col in [col for col in df_inter.drop('inter_area', axis=1)]:
         df_grid[col] = df_inter[col] / df_inter['inter_area']
@@ -145,7 +155,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
 
         # Reshape to grid
         grid_values['_'.join(col.split('_')[1:])] = np.ma.masked_invalid(
-            col_array.reshape((len(grid_lat) - 1, len(grid_lon) - 1) + col_array.shape[1:])
+            col_array.reshape(grid_shape + col_array.shape[1:])
         )
 
     # As datetime variables
@@ -156,32 +166,41 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
 
 # =================================================================================
 
-def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90)):
+def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corners'):
     """
-    Creates equally spaced grid points.
+    Creates equally spaced grid cells.
 
     Parameters
     ----------
-    grid_size : float or tuple
-        Size of the grid cells, if a float is given it will assume regular grid
-    lon_lim : tuple
-        Longitude limits of the grid, included
-    lat_lim : tuple
-        Latitude limits of the grid, included
+    grid_size : float or tuple[float, float]
+        Size of the grid cells, if a float is given it will assume regular grid.
+    lon_lim : tuple[float, float]
+        Longitude limits of the grid, included.
+    lat_lim : tuple[float, float]
+        Latitude limits of the grid, included.
+    method : str
+        Indicates if the points are the corners or the centers of the grid. Default: 'corners'.
 
     Returns
     -------
-    Tuple of np.ndarray
+    tuple[np.ndarray, np.ndarray]
+        A tuple with (lons, lats) 1D arrays.
     """
     if isinstance(grid_size, (float, int)):
         grid_size = (grid_size, grid_size)
     else:
         grid_size = tuple(grid_size)
 
-    nlon = int((lon_lim[1] - lon_lim[0]) / grid_size[0])
-    nlat = int((lat_lim[1] - lat_lim[0]) / grid_size[1])
-    grid_lon = np.linspace(*lon_lim, num=nlon + 1, endpoint=True)
-    grid_lat = np.linspace(*lat_lim, num=nlat + 1, endpoint=True)
+    if len(lon_lim) != 2 or len(lat_lim) != 2:
+        raise AssertionError('Both lon and lat limits have to be tuples with two elements.')
+
+    if method == 'corners':
+        nlon = int((lon_lim[1] - lon_lim[0]) / grid_size[0])
+        nlat = int((lat_lim[1] - lat_lim[0]) / grid_size[1])
+        grid_lon = np.linspace(*lon_lim, num=nlon + 1, endpoint=True)
+        grid_lat = np.linspace(*lat_lim, num=nlat + 1, endpoint=True)
+    else:
+        raise NotImplementedError(f"Method '{method}' not implemented, desirable")
 
     return grid_lon, grid_lat
 

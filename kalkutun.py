@@ -132,6 +132,7 @@ class Kalkutun:
         self.time_utc = None
         self.format = None      # polygons, centers or corners
         self.variables = {}
+        self.support = {}
 
         # Initialize context to read values from dataset
         with dataset if to_context else nullcontext(dataset) as ds:
@@ -179,8 +180,44 @@ class Kalkutun:
                 }
 
                 self.variables.update({
-                    'avg_kernel': variables['averaging_kernel'][:],
+                    'nitrogendioxide_tropospheric_column_precision': variables[product_name+'_precision'][:],
                 })
+                
+                # Get support variables
+                avg_kernel = variables['averaging_kernel'][:]
+                surface_pressure = ds.groups['PRODUCT'].groups['SUPPORT_DATA'].groups['INPUT_DATA'].variables['surface_pressure'][:]
+                const_a = variables['tm5_constant_a'][:]
+                const_b = variables['tm5_constant_b'][:]
+                tropo_layer_index = variables['tm5_tropopause_layer_index'][:]                    
+                air_mass_troposphere = variables['air_mass_factor_troposphere'][:]
+                air_mass_total = variables['air_mass_factor_total'][:]
+       
+                const_a = np.concatenate([const_a[:, 0], const_a[-1:, 1]])
+                const_b = np.concatenate([const_b[:, 0], const_b[-1:, 1]])
+
+                self.support.update({
+                    'surface_pressure': surface_pressure,
+                    'tm5_constant_a': const_a,
+                    'tm5_constant_b': const_b,
+                    'tm5_tropopause_layer_index': tropo_layer_index,
+                    'air_mass_troposphere': air_mass_troposphere,
+                    'air_mass_total': air_mass_total,
+                    'avg_kernel': avg_kernel,
+                })
+
+                # Calculate and include half level pressures (nlayers + 1)
+                hlevp = const_a[None, None, None, :] + const_b[None, None, None, :] * surface_pressure[..., None]
+                self.variables['hlevel_pressure'] = hlevp
+
+                # Calculate troposphere mask
+                troposphere_mask = np.ones(avg_kernel.shape)
+                for i in range(troposphere_mask.shape[-1]):
+                    troposphere_mask[..., i][i > tropo_layer_index] = 0
+
+                # Calculate tropospheric averaging kernel
+                tropo_avg_kernel = troposphere_mask * avg_kernel * air_mass_total[..., None] / air_mass_troposphere[..., None]
+                self.variables['tropo_avg_kernel'] = tropo_avg_kernel
+
 
             # -----------------------------------------------
             #  TROPOMI WFMD IUP CH4/C0 v1.8
@@ -294,7 +331,7 @@ class Kalkutun:
         return new_object
 
     # -----------------------------------------------------------------------------
-    def convert_units(self, to_unit):
+    def convert_units(self, to_unit, var_list=None):
         """
         Change units of the product data.
 
@@ -302,6 +339,8 @@ class Kalkutun:
         ----------
         to_unit : str
             The desired new unit of the data.
+        var_list : list
+            Which variables to include from the product
 
         Returns
         -------
@@ -309,7 +348,14 @@ class Kalkutun:
         """
         to_unit = standardise_unit_string(to_unit)
         self.data = convert_units(self.data, from_unit=self.units, to_unit=to_unit, species=self.tracer)
+
+        if not var_list: var_list = []
+        for var in var_list:
+            self.variables[var] = convert_units(self.variables[var], from_unit=self.units,
+                                                to_unit=to_unit, species=self.tracer)
+
         self.units = to_unit
+
         return
 
     # -----------------------------------------------------------------------------
@@ -403,6 +449,8 @@ class Kalkutun:
         np.ndarray
             An array of Polygon objects created from the product's longitude and latitude.
         """
+        # ToDo: check why is necessary to return a list with arrays and not just a single list with
+        #   polygons to be processed.
         if self.longitude_corners is not None and self.latitude_corners is not None:
             coords = np.moveaxis(np.asarray([self.longitude_corners, self.latitude_corners]), 0, -1)
         else:
@@ -513,42 +561,93 @@ class GridCrafter:
     """
     Adapting data to its new grid like a master of disguise.
     Basically, just creates a regular grid, further capabilities are desired.
+
+    Parameters
+    ----------
+    longitudes, latitudes : np.ndarray
+        Grid corners to be used.
+    interpolation : str
+        Method of interpolation to be used.
+    min_fill : float
+        Fraction of the grid cell that has to be filled to be valid. If not provided, 0.0 by default.
+    qa_filter : float
+        Minimum value of the quality flag necessary to consider that measurement.
+    units : str
+        Desired output units of the main data of the product. It will try to convert both the data and its
+        standard deviation.
+    geod : pyproj.Geod
+        Geodetic object to be used for calculating areas of cells. Assumes Earth if none is provided.
     """
     __module__ = 'kintunwenu'
 
     def __init__(
             self,
-            coordinates=(-180, 180, -90, 90),
-            resolution=(6, 4),
+            grid_lons, grid_lats,
             interpolation='weighted',
-            min_fill=None,
+            min_fill=None, qa_filter=None,
+            units=None, geod=None,
             **kwargs
     ):
-
-        if len(coordinates) != 4:
-            raise AssertionError(f'An iterable with 4 values must be given for '
-                                 f'coordinates limits ({len(coordinates)} given).')
-        if (coordinates[1] <= coordinates[0]) or (coordinates[3] <= coordinates[2]):
-            raise AssertionError(f'Coordinates must be ordered, with longitudes first and latitudes last.')
-        self.lon_lim = tuple(coordinates[:2])
-        self.lat_lim = tuple(coordinates[2:])
-
-        self.grid_resolution = (resolution, resolution) if isinstance(resolution, (float, int)) else tuple(resolution)
-        if (self.grid_resolution[0] <= 0) or (self.grid_resolution[1] <= 0):
-            raise AssertionError('Given grid resolution must be greater than 0.')
+        self.lon_lim = np.min(grid_lons), np.max(grid_lons)
+        self.lat_lim = np.min(grid_lats), np.max(grid_lats)
 
         if interpolation in ['weighted']:
             self.interpolation = interpolation
         else:
-            raise AssertionError('Interpolation method must be "weighted".')
+            raise AssertionError("Interpolation method must be 'weighted'.")
 
         self.min_fill = min_fill
-        self.units = kwargs.pop('units', None)
-        self.geod = kwargs.pop('geod', None)
-        self.qa_filter = kwargs.pop('qa_filter', None)
+        self.units = units
+        self.geod = geod
+        self.qa_filter = qa_filter
+        self.lat_filter = kwargs.pop('lat_filter', None)
 
-        # Create coordinate grids
-        self.lons, self.lats = create_grid(resolution, coordinates[0:2], coordinates[2:4])
+        self.lons, self.lats = np.asarray(grid_lons), np.asarray(grid_lats)
+
+        if self.lons.ndim != self.lats.ndim:
+            raise ValueError(f"Grid dimensions have to be the same for latitudes and longitudes")
+        if self.lons.ndim > 2 or self.lats.ndim > 2:
+            raise ValueError(f"Grid dimensions must be 1 or 2, not {self.lons.ndim}")
+        if self.lons.ndim == 2:
+            if self.lons.shape != self.lats.shape:
+                raise ValueError(f"Grid longitudes and latitudes must have same shape. "
+                                 f"({self.lons.shape}) and ({self.lats.shape}) found.")
+
+    # -----------------------------------------------------------------------------
+    @classmethod
+    def from_grid(cls, grid_lons, grid_lats, **kwargs):
+        """
+        Creates an instance of GridCrafter but providing a grid.
+        Useful for non-monotonous grids.
+
+        Parameters
+        ----------
+        grid_lons, grid_lats : np.ndarray
+            Grid corners to be used.
+        """
+        return cls(grid_lons, grid_lats, **kwargs)
+
+    # -----------------------------------------------------------------------------
+    @classmethod
+    def from_size(cls, grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corners', **kwargs):
+        """
+        Creates an instance of GridCrafter but providing coordinates and a grid resolution.
+        Useful for monotonous grids.
+
+        Parameters
+        ----------
+        grid_size : float or tuple[float, float]
+            Size of the grid cells, if a float is given it will assume regular grid.
+        lon_lim : tuple[float, float]
+            Longitude limits of the grid, included.
+        lat_lim : tuple[float, float]
+            Latitude limits of the grid, included.
+        method : str
+            Indicates if the points are the corners or the centers of the grid. Default: 'corners'.
+        """
+        grid_lons, grid_lats = create_grid(grid_size, lon_lim, lat_lim, method)
+
+        return cls(grid_lons, grid_lats, **kwargs)
 
     # -----------------------------------------------------------------------------
     def __call__(self, *args, **kwargs):
@@ -602,7 +701,7 @@ class GridCrafter:
             df_obs = df_obs[df_obs['data'] > 0.0]
 
         if len(df_obs) == 0:
-            logging.warning(f"    No polygons to regrid, returning None (might check masked data)")
+            logging.warning(f"    No polygons to regrid for {product}, returning None (might check masked data)")
             return None
 
         if self.interpolation == 'weighted':
@@ -610,6 +709,9 @@ class GridCrafter:
                 self.lons, self.lats, df_obs['geometry'], df_obs.drop('geometry', axis=1),
                 min_fill=self.min_fill, geod=self.geod, **kwargs
             )
+            if not regrid:
+                logging.warning(f"    No cell filled for {product}, returning None (might check masked data)")
+                return None
         else:
             raise NotImplementedError('Interpolation type not implemented')
 
