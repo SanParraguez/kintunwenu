@@ -19,6 +19,7 @@ __all__ = [
 ]
 
 # === IMPORTS =========================================================
+
 import numpy as np
 import pandas as pd
 import shapely
@@ -27,8 +28,8 @@ from multiprocessing.pool import Pool, ThreadPool
 from pyproj import Geod
 from shapely.geometry import Polygon
 
-# =================================================================================
 
+# =================================================================================
 def create_geo_dataset(geometries, **kwargs):
     """
     Creates a pandas DataFrame that combines Shapely Polygon objects and data values.

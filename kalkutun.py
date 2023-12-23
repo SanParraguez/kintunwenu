@@ -135,7 +135,7 @@ class Kalkutun:
         self.support = {}
 
         # Initialize context to read values from dataset
-        with dataset if to_context else nullcontext(dataset) as ds:
+        with (dataset if to_context else nullcontext(dataset) as ds):
             # -----------------------------------------------
             #  General
             # -----------------------------------------------
@@ -162,6 +162,7 @@ class Kalkutun:
 
                 # Retrieve attributes from variables in product
                 variables = ds.groups['PRODUCT'].variables
+                support_data = ds.groups['PRODUCT'].groups['SUPPORT_DATA']
                 product_name = [key for key in variables.keys() if key.endswith('_column')]
                 product_name = product_name[0] if len(product_name) == 1 \
                     else AttributeError('Found more tan one column in data')
@@ -185,7 +186,7 @@ class Kalkutun:
                 
                 # Get support variables
                 avg_kernel = variables['averaging_kernel'][:]
-                surface_pressure = ds.groups['PRODUCT'].groups['SUPPORT_DATA'].groups['INPUT_DATA'].variables['surface_pressure'][:]
+                surface_pressure = support_data.groups['INPUT_DATA'].variables['surface_pressure'][:]
                 const_a = variables['tm5_constant_a'][:]
                 const_b = variables['tm5_constant_b'][:]
                 tropo_layer_index = variables['tm5_tropopause_layer_index'][:]                    
@@ -215,9 +216,9 @@ class Kalkutun:
                     troposphere_mask[..., i][i > tropo_layer_index] = 0
 
                 # Calculate tropospheric averaging kernel
-                tropo_avg_kernel = troposphere_mask * avg_kernel * air_mass_total[..., None] / air_mass_troposphere[..., None]
+                tropo_avg_kernel = troposphere_mask * avg_kernel * \
+                                   air_mass_total[..., None] / air_mass_troposphere[..., None]
                 self.variables['tropo_avg_kernel'] = tropo_avg_kernel
-
 
             # -----------------------------------------------
             #  TROPOMI WFMD IUP CH4/C0 v1.8
@@ -349,7 +350,8 @@ class Kalkutun:
         to_unit = standardise_unit_string(to_unit)
         self.data = convert_units(self.data, from_unit=self.units, to_unit=to_unit, species=self.tracer)
 
-        if not var_list: var_list = []
+        if not var_list:
+            var_list = []
         for var in var_list:
             self.variables[var] = convert_units(self.variables[var], from_unit=self.units,
                                                 to_unit=to_unit, species=self.tracer)
