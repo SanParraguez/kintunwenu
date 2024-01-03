@@ -13,6 +13,7 @@ __all__ = [
 ]
 
 # === IMPORTS =========================================================
+
 import logging
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ import shapely
 from datetime import datetime
 from .geodata import get_intersections, get_areas
 from .polygons import get_corners_from_grid
+
 
 # =================================================================================
 
@@ -210,8 +212,8 @@ def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corne
 
     return grid_lon, grid_lat
 
-# =================================================================================
 
+# =================================================================================
 def create_geo_grid(lons, lats, mode='corners'):
     """
     Generates a Geo-DataFrame containing a grid of polygons defined by the input latitude and longitude coordinates.
