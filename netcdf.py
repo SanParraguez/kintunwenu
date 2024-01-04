@@ -136,11 +136,6 @@ def WriteGridFile(filename, data, gridder, indent='', ncattrs=None, sup_vars=Non
         lat_bounds.units = 'degrees_north'
         lat_bounds[:] = [gridder.lats[0], gridder.lats[-1]]
 
-        # product = ds.createVariable('product', 'float32', ('time', 'latitude', 'longitude', ))
-        # product.standard_name = f'gridded_product'
-        # product.units = gridder.units
-        # product[:] = data['value']
-
         for key, value in data.items():
 
             if value.squeeze().ndim == 2:

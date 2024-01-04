@@ -135,7 +135,7 @@ class Kalkutun:
         self.support = {}
 
         # Initialize context to read values from dataset
-        with (dataset if to_context else nullcontext(dataset) as ds):
+        with dataset if to_context else nullcontext(dataset) as ds:
             # -----------------------------------------------
             #  General
             # -----------------------------------------------
@@ -513,17 +513,16 @@ class Kalkutun:
             time_utc = time_utc[:, 1:-1, 1:-1].reshape(new_shape)
             kw_vars = {}
             for k in var_list:
-                if k in self.variables.keys():
-                    old_shape = self.variables[k].shape
-                    new_shape = (old_shape[0], (old_shape[1] - 2) * (old_shape[2] - 2), *old_shape[3:])
-                    kw_vars[k] = self.variables[k][:, 1:-1, 1:-1].reshape(new_shape)
+                old_shape = self.variables[k].shape
+                new_shape = (old_shape[0], (old_shape[1] - 2) * (old_shape[2] - 2), *old_shape[3:])
+                kw_vars[k] = self.variables[k][:, 1:-1, 1:-1].reshape(new_shape)
 
         elif self.format in ['corners', 'polygons']:
             old_shape = self.data.shape
             new_shape = (old_shape[0], old_shape[1] * old_shape[2], *old_shape[3:])
             data = self.data.reshape(new_shape)
             time_utc = time_utc.reshape(new_shape)
-            kw_vars = {k: self.variables.get(k).reshape(new_shape) for k in var_list if k in self.variables.keys()}
+            kw_vars = {k: self.variables.get(k).reshape(new_shape) for k in var_list}
         else:
             raise AssertionError('Format of the data not recognized')
 
@@ -556,6 +555,7 @@ class Kalkutun:
             df = [dfi.reset_index(drop=True) for dfi in df]
 
         return df if len(df) > 1 else df[0]
+
 
 # =================================================================================
 
@@ -716,6 +716,9 @@ class GridCrafter:
                 return None
         else:
             raise NotImplementedError('Interpolation type not implemented')
+
+        # change data to actual name
+        regrid[kprod.product] = regrid.pop('data')
 
         logging.debug(f"  Finished gridding of product ({next(iter(regrid.values())).count()} valid values)")
         return regrid
