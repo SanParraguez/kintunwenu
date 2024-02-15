@@ -14,6 +14,7 @@ __all__ = [
 ]
 
 # ============= IMPORTS ===============================
+
 import logging
 import shapely
 import numpy as np
@@ -26,6 +27,7 @@ from .grid import create_grid, weighted_regrid
 from .polygons import get_corners_from_grid, split_anomaly_polygons
 from .scrap import download_ncfile
 from .units import standardise_unit_string, convert_units
+
 
 # =================================================================================
 
@@ -471,7 +473,7 @@ class Kalkutun:
         Parameters
         ----------
         var_list : list
-            List of extra variables to be gridded
+            A list of extra variables to be gridded
         reset_index : bool, optional
             Indicates if index should be reset before return or not.
         split_antimeridian : bool, optional
@@ -500,7 +502,7 @@ class Kalkutun:
         elif isinstance(var_list, str):
             var_list = [var_list]
 
-        # ToDo: Check if this is still neccesary, might be better to just remove it
+        # ToDo: Check if this is still necessary, might be better to just remove it
         if self.time_utc.ndim == self.data.ndim - 1:
             time_utc = np.repeat(self.time_utc[..., None], self.data.shape[-1], axis=-1)
         else:

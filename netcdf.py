@@ -107,6 +107,7 @@ def WriteGridFile(filename, data, gridder, indent='', ncattrs=None, sup_vars=Non
         for k, v in ncattrs.items():
             setattr(ds,  k, v)
 
+        # ToDo: change hardcoded number of layers to a general value
         longitude = ds.createDimension('longitude', gridder.lons.shape[0] - 1)
         latitude = ds.createDimension('latitude', gridder.lats.shape[0] - 1)
         layer = ds.createDimension('layer', 34)
