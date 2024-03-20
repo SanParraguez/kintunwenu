@@ -234,6 +234,7 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
             new_data = np.ma.concatenate([np.tile(d, (n, 1)) for d, n in zip(new_data, repeat_index)]).squeeze()
             data = np.concatenate([data, new_data])
         elif isinstance(data, dict):
+            # ToDo: check bugs or need of using ma module on concatenate.
             """
             In case of having a dictionary, we iterate over the variables. For each one, we split the 'anomaly' 
             values and then we repeat (tile) them n times. The squeeze works for the case of single dimension,
@@ -242,7 +243,6 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
             be properly concatenated. 
             Not sure about np.ma.concatenated and then the normal one. Should be checked for bugs eventually.
             """
-            # ToDo: check bugs or need of using ma module on concatenate.
             for key, value in data.items():
                 value = np.asarray(value)
                 value, new_value = value[~anomaly], value[anomaly]

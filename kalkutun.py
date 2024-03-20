@@ -219,7 +219,7 @@ class Kalkutun:
 
                 # Calculate tropospheric averaging kernel
                 tropo_avg_kernel = troposphere_mask * avg_kernel * \
-                                   air_mass_total[..., None] / air_mass_troposphere[..., None]
+                    air_mass_total[..., None] / air_mass_troposphere[..., None]
                 self.variables['tropo_avg_kernel'] = tropo_avg_kernel
 
             # -----------------------------------------------
@@ -705,7 +705,7 @@ class GridCrafter:
             df_obs = df_obs[df_obs['data'] > 0.0]
 
         if len(df_obs) == 0:
-            logging.warning(f"    No polygons to regrid for {product}, returning None (might check masked data)")
+            logging.warning(f"    No polygons left to regrid for {product}, returning None (might check masked data)")
             return None
 
         if self.interpolation == 'weighted':

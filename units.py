@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 =======================================================
-===                   KINTUN-WENU                   ===
+===                   KINTUN WENU                   ===
 =======================================================
--> UNITS
+
+UNITS
+-----
 
 Module to deal with unit transformations and get some constants.
+
 """
 __all__ = [
     'standardise_unit_string',
@@ -13,24 +16,129 @@ __all__ = [
 ]
 
 # ============= IMPORTS ===============================
+import logging
 import numpy as np
 
 # =================================================================================
-# ToDo: Define if these constants must be capitalized
+
 # Define molar masses (in g/mol) for commonly measured gas species
-molar_masses = {'o3': 47.9982, 'no2': 46.0055, 'so2': 64.064,
-                'co2': 44.0095, 'ch4': 16.0425}
+import kintunwenu.utils
+
+MOLAR_MASS = {
+    'o3' : 47.9982,
+    'no2': 46.0055,
+    'so2': 64.0640,
+    'co2': 44.0095,
+    'ch4': 16.0425,
+}
 
 # Avogadro constant
 Na = 6.02214076 * 1e23
 
-# Unit convert dictionary
-convert_dict = {
-    'mol m-2': 'mol/m2',
-    'cm^-2': 'molec/cm2',
-    '1e-9': 'ppb',
-    '1e-6': 'ppm',
+# Unit name dictionary
+STANDARD_DICT = {
+    'mol m-2'   : 'mol/m2',
+    'cm^-2'     : 'molec/cm2',
+    'ppb'       : '1e-9',
+    'ppm'       : '1e-6',
+    'tons'      : 'ton',
+    'tonnes'    : 'ton',
 }
+
+# Dictionary to convert units to SI
+CONVERT_TO_SI = {
+
+    # Distance
+    'm'     : 1,
+    'cm'    : 1e-2,
+    'km'    : 1e3,
+
+    # Area
+    'm2'    : 1,
+    'cm2'   : 1e-4,
+    'km2'   : 1e6,
+
+    # Volume
+    'm3'    : 1,
+    'cm3'   : 1e-6,
+    'km3'   : 1e9,
+
+    # Mass
+    'kg'    : 1,
+    'g'     : 1e-3,
+    'mg'    : 1e-6,
+    'ug'    : 1e-9,
+    'Pg'    : 1e12,
+    'Tg'    : 1e9,
+    'Gg'    : 1e6,
+    'Mg'    : 1e3,
+    'ton'   : 1e3,
+
+    # Pressure
+    'Pa'    : 1,
+    'hPa'   : 1e3,
+
+    # Amount of substance
+    '1'     : 1,
+    'molec' : 1,
+    'mol'   : 1 / Na,
+    'umol'  : 1e-6 / Na,
+
+    # Time
+    's'     : 1,
+    'min'   : 60,
+    'hr'    : 3600,
+    'y'     : 365 * 24 * 3600,
+
+}
+
+# Dictionary to check consistency of unit transformation
+UNIT_TYPE = {
+
+    # Distance
+    'm'  : 'length',
+    'cm' : 'length',
+    'km' : 'length',
+
+    # Area
+    'm2'  : 'area',
+    'cm2' : 'area',
+    'km2' : 'area',
+
+    # Volume
+    'm3'  : 'volume',
+    'cm3' : 'volume',
+    'km3' : 'volume',
+
+    # Mass
+    'kg' : 'mass',
+    'g'  : 'mass',
+    'mg' : 'mass',
+    'ug' : 'mass',
+    'Pg' : 'mass',
+    'Tg' : 'mass',
+    'Gg' : 'mass',
+    'Mg' : 'mass',
+    'ton': 'mass',
+
+    # Pressure
+    'Pa' : 'pressure',
+    'hPa': 'pressure',
+
+    # Amount of substance
+    '1'    : 'amount',
+    'molec': 'amount',
+    'mol'  : 'amount',
+    'umol' : 'amount',
+
+    # Time
+    's'    : 'time',
+    'min'  : 'time',
+    'hr'   : 'time',
+    'y'    : 'time',
+
+}
+
 # =================================================================================
 
 def standardise_unit_string(units):
@@ -47,7 +155,17 @@ def standardise_unit_string(units):
     str
         String with the same unit
     """
-    return convert_dict.get(units, units)
+    return STANDARD_DICT.get(units, units)
+
+# =================================================================================
+
+def check_unit_types(*units):
+    """
+    Parameters
+    ----------
+    units : str
+    """
+    return all(UNIT_TYPE[i] == UNIT_TYPE[units[0]] for i in units[1:])
 
 # =================================================================================
 
@@ -75,173 +193,142 @@ def convert_units(data, from_unit, to_unit, species=None):
     np.ndarray
         The converted data.
     """
-    # ToDo: change to a two-step process, first to a standard unit and then to the desired.
-    #   This should avoid the huge amount of if-else conditions.
-    data = np.ma.array(data)
+    # ToDo: implement handling of species
 
-    from_unit = standardise_unit_string(from_unit.lower())
-    to_unit = standardise_unit_string(to_unit.lower())
+    data = np.ma.array(data, dtype=np.float)
+
+    from_unit = standardise_unit_string(from_unit)
+    to_unit = standardise_unit_string(to_unit)
+
+    logging.info(f"{from_unit} -> {to_unit}")
 
     if from_unit == to_unit:
         return data
 
-    if from_unit in ['ppb', 'ppm']:
-        if from_unit == 'ppb' and to_unit == 'ppm':
-            return data * 1000
-        elif from_unit == 'ppm' and to_unit == 'ppb':
-            return data / 1000
-        else:
-            raise ValueError(f'Unit transformation {from_unit} -> {to_unit} not recognized')
-
     conv_factor = 1.0
-    from_num, from_den = from_unit.split('/')
-    to_num, to_den = to_unit.split('/')
 
-    if from_den != to_den:
-        # Area units
-        if from_den == 'm2':
-            if to_den == 'cm2':
-                conv_factor *= 1e4
-            elif to_den == 'km2':
-                conv_factor *= 1e-6
-            else:
-                raise ValueError(f"Area unit '{to_den}' not recognized.")
+    try:
+        from_num, from_den = from_unit.split('/')
+    except ValueError:
+        from_num, from_den = from_unit, '1'
+    try:
+        to_num, to_den = to_unit.split('/')
+    except ValueError:
+        to_num, to_den = to_unit, '1'
 
-        elif from_den == 'cm2':
-            if to_den == 'm2':
-                conv_factor *= 1e-4
-            elif to_den == 'km2':
-                conv_factor *= 1e-10
-            else:
-                raise ValueError(f"Area unit '{to_den}' not recognized.")
+    if not check_unit_types(from_num, to_num) or not check_unit_types(from_den, to_den):
+        raise ValueError(f"Units should be consistent, invalid unit conversion '{from_unit}' to '{to_unit}'")
 
-        elif from_den == 'km2':
-            if to_den == 'm2':
-                conv_factor *= 1e6
-            elif to_den == 'cm2':
-                conv_factor *= 1e10
-            else:
-                raise ValueError(f"Area unit '{to_den}' not recognized.")
+    for x in [from_num, to_den]:
+        try:
+            conv_factor *= CONVERT_TO_SI[x]
+        except KeyError as err:
+            logging.error(err)
+            raise NotImplementedError(f'Unit {x} not recognized')
 
-        # Volume units
-        elif from_den == 'm3':
-            if to_den == 'cm3':
-                conv_factor *= 1e6
-            elif to_den == 'km3':
-                conv_factor *= 1e-9
-            else:
-                raise ValueError(f"Volume unit '{to_den}' not recognized.")
+    for x in [from_den, to_num]:
+        try:
+            conv_factor /= CONVERT_TO_SI[x]
+        except KeyError as err:
+            logging.error(err)
+            raise NotImplementedError(f'Unit {x} not recognized')
 
-        elif from_den == 'cm3':
-            if to_den == 'm3':
-                conv_factor *= 1e-6
-            elif to_den == 'km3':
-                conv_factor *= 1e-15
-            else:
-                raise ValueError(f"Volume unit '{to_den}' not recognized")
+    # -------------------------------------------
+    #  LEGACY - Kept for reference in the future
+    # -------------------------------------------
+    # if from_num != to_num:
+    #     # Number of molecules
+    #     if from_num == 'molec':
+    #         if to_num == 'mol':
+    #             conv_factor *= 1 / Na
+    #         elif to_num == 'umol':
+    #             conv_factor *= 1e6 / Na
+    #         elif to_num in ['g', 'kg']:
+    #             if species is None:
+    #                 raise ValueError(f"Species must be specified when converting from {from_unit} to {to_unit}.")
+    #             molar_mass = MOLAR_MASS.get(species.lower())
+    #             if molar_mass is None:
+    #                 raise ValueError(f"Molar mass for species '{species}' is not available.")
+    #             conv_factor *= molar_mass / Na
+    #             if to_num == 'kg':
+    #                 conv_factor *= 1e-3
+    #         else:
+    #             raise ValueError(f"Unit '{to_num}' not recognized")
+    #
+    #     elif from_num == 'mol':
+    #         if to_num == 'molec':
+    #             conv_factor *= Na
+    #         elif to_num == 'umol':
+    #             conv_factor *= 1e6
+    #         elif to_num in ['g', 'kg']:
+    #             if species is None:
+    #                 raise ValueError(f"Species must be specified when converting from {from_unit} to {to_unit}.")
+    #             molar_mass = MOLAR_MASS.get(species.lower())
+    #             if molar_mass is None:
+    #                 raise ValueError(f"Molar mass for species '{species}' is not available.")
+    #             conv_factor *= molar_mass
+    #             if to_num == 'kg':
+    #                 conv_factor *= 1e-3
+    #         else:
+    #             raise ValueError(f"Unit '{to_num}' not recognized")
+    #
+    #     elif from_num == 'umol':
+    #         if to_num == 'molec':
+    #             conv_factor *= Na * 1e-6
+    #         elif to_num == 'mol':
+    #             conv_factor *= 1e-6
+    #         elif to_num in ['g', 'kg']:
+    #             if species is None:
+    #                 raise ValueError(f"Species must be specified when converting from {from_unit} to {to_unit}.")
+    #             molar_mass = MOLAR_MASS.get(species.lower())
+    #             if molar_mass is None:
+    #                 raise ValueError(f"Molar mass for species '{species}' is not available.")
+    #             conv_factor *= 1e-6 * molar_mass
+    #             if to_num == 'kg':
+    #                 conv_factor *= 1e-3
+    #         else:
+    #             raise ValueError(f"Unit '{to_num}' not recognized")
+    #
+    #     # Mass units
+    #     elif from_num == 'g':
+    #         if to_num == 'kg':
+    #             conv_factor *= 1e-3
+    #         elif to_num in ['molec', 'mol', 'umol']:
+    #             if species is None:
+    #                 raise ValueError(f"Species must be specified when converting from {from_unit} to {to_unit}.")
+    #             molar_mass = MOLAR_MASS.get(species.lower())
+    #             if molar_mass is None:
+    #                 raise ValueError(f"Molar mass for species '{species}' is not available.")
+    #             conv_factor *= 1 / molar_mass
+    #             if to_num == 'umol':
+    #                 conv_factor *= 1e6
+    #             elif to_num == 'molec':
+    #                 conv_factor *= Na
+    #         else:
+    #             raise ValueError(f"Unit '{to_num}' not recognized")
+    #
+    #     elif from_num == 'kg':
+    #         if to_num == 'g':
+    #             conv_factor *= 1e3
+    #         elif to_num in ['molec', 'mol', 'umol']:
+    #             if species is None:
+    #                 raise ValueError(f"Species must be specified when converting from {from_unit} to {to_unit}.")
+    #             molar_mass = MOLAR_MASS.get(species.lower())
+    #             if molar_mass is None:
+    #                 raise ValueError(f"Molar mass for species '{species}' is not available.")
+    #             conv_factor *= 1e3 / molar_mass
+    #             if to_num == 'umol':
+    #                 conv_factor *= 1e6
+    #             elif to_num == 'molec':
+    #                 conv_factor *= Na
+    #         else:
+    #             raise ValueError(f"Unit '{to_num}' not recognized")
+    #
+    #     else:
+    #         raise ValueError(f"Unit {from_num} not recognized")
+    # -------------------------------------------------------------------------
 
-        elif from_den == 'km3':
-            if to_den == 'm3':
-                conv_factor *= 1e9
-            elif to_den == 'cm3':
-                conv_factor *= 1e15
-            else:
-                raise ValueError(f"Volume unit '{to_den}' not recognized")
-
-        else:
-            raise ValueError(f"Unit '{from_den}' not recognized")
-
-    if from_num != to_num:
-        # Number of molecules
-        if from_num == 'molec':
-            if to_num == 'mol':
-                conv_factor *= 1 / Na
-            elif to_num == 'umol':
-                conv_factor *= 1e6 / Na
-            elif to_num in ['g', 'kg']:
-                if species is None:
-                    raise ValueError(f"Species must be specified when converting from {from_unit} to {to_unit}.")
-                molar_mass = molar_masses.get(species.lower())
-                if molar_mass is None:
-                    raise ValueError(f"Molar mass for species '{species}' is not available.")
-                conv_factor *= molar_mass / Na
-                if to_num == 'kg':
-                    conv_factor *= 1e-3
-            else:
-                raise ValueError(f"Unit '{to_num}' not recognized")
-
-        elif from_num == 'mol':
-            if to_num == 'molec':
-                conv_factor *= Na
-            elif to_num == 'umol':
-                conv_factor *= 1e6
-            elif to_num in ['g', 'kg']:
-                if species is None:
-                    raise ValueError(f"Species must be specified when converting from {from_unit} to {to_unit}.")
-                molar_mass = molar_masses.get(species.lower())
-                if molar_mass is None:
-                    raise ValueError(f"Molar mass for species '{species}' is not available.")
-                conv_factor *= molar_mass
-                if to_num == 'kg':
-                    conv_factor *= 1e-3
-            else:
-                raise ValueError(f"Unit '{to_num}' not recognized")
-
-        elif from_num == 'umol':
-            if to_num == 'molec':
-                conv_factor *= Na * 1e-6
-            elif to_num == 'mol':
-                conv_factor *= 1e-6
-            elif to_num in ['g', 'kg']:
-                if species is None:
-                    raise ValueError(f"Species must be specified when converting from {from_unit} to {to_unit}.")
-                molar_mass = molar_masses.get(species.lower())
-                if molar_mass is None:
-                    raise ValueError(f"Molar mass for species '{species}' is not available.")
-                conv_factor *= 1e-6 * molar_mass
-                if to_num == 'kg':
-                    conv_factor *= 1e-3
-            else:
-                raise ValueError(f"Unit '{to_num}' not recognized")
-
-        # Mass units
-        elif from_num == 'g':
-            if to_num == 'kg':
-                conv_factor *= 1e-3
-            elif to_num in ['molec', 'mol', 'umol']:
-                if species is None:
-                    raise ValueError(f"Species must be specified when converting from {from_unit} to {to_unit}.")
-                molar_mass = molar_masses.get(species.lower())
-                if molar_mass is None:
-                    raise ValueError(f"Molar mass for species '{species}' is not available.")
-                conv_factor *= 1 / molar_mass
-                if to_num == 'umol':
-                    conv_factor *= 1e6
-                elif to_num == 'molec':
-                    conv_factor *= Na
-            else:
-                raise ValueError(f"Unit '{to_num}' not recognized")
-
-        elif from_num == 'kg':
-            if to_num == 'g':
-                conv_factor *= 1e3
-            elif to_num in ['molec', 'mol', 'umol']:
-                if species is None:
-                    raise ValueError(f"Species must be specified when converting from {from_unit} to {to_unit}.")
-                molar_mass = molar_masses.get(species.lower())
-                if molar_mass is None:
-                    raise ValueError(f"Molar mass for species '{species}' is not available.")
-                conv_factor *= 1e3 / molar_mass
-                if to_num == 'umol':
-                    conv_factor *= 1e6
-                elif to_num == 'molec':
-                    conv_factor *= Na
-            else:
-                raise ValueError(f"Unit '{to_num}' not recognized")
-
-        else:
-            raise ValueError(f"Unit {from_num} not recognized")
-
+    logging.debug(f"applying conversion factor: {conv_factor:.4g} for {from_unit} -> {to_unit}")
     data[~data.mask] *= conv_factor
     return data
 

@@ -66,7 +66,7 @@ def create_nc_file(path, filename, dimensions=None, variables=None, attributes=N
 
             var = ds.createVariable(name, var_datatype, var_dimensions)
             var_value = value.pop('values', None)
-            # TODO: Improve assigning method
+            # ToDo: Improve assigning method
             try:
                 var[:] = var_value
             except IndexError:
@@ -85,8 +85,8 @@ def create_nc_file(path, filename, dimensions=None, variables=None, attributes=N
 
     return None
 
-
 # =====================================================================
+
 def WriteGridFile(filename, data, gridder, indent='', ncattrs=None, sup_vars=None, sup_dims=None):
     """
     Write gridded file
