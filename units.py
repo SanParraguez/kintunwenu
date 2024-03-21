@@ -171,7 +171,7 @@ def check_unit_types(*units):
 
 def convert_units(data, from_unit, to_unit, species=None):
     """
-    Converts data from one concentration unit to another. Units should be in
+    Converts data from one unit to another. Units should be in
     ['mol/m2', 'umol/m2', 'molec/cm2', 'ppb', 'ppm', g/cm3]. To be honest, you
     could try a couple more. Also, I was tired, so you should check any output from
     this function.
@@ -195,7 +195,7 @@ def convert_units(data, from_unit, to_unit, species=None):
     """
     # ToDo: implement handling of species
 
-    data = np.ma.array(data, dtype=np.float)
+    data = np.ma.array(data, dtype=float)
 
     from_unit = standardise_unit_string(from_unit)
     to_unit = standardise_unit_string(to_unit)

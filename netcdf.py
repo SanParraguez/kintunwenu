@@ -9,6 +9,7 @@ Contains functions for handling NetCDF files.
 """
 __all__ = [
     'create_nc_file',
+    'get_netcdf_var',
     'WriteGridFile'
 ]
 
@@ -190,5 +191,26 @@ def WriteGridFile(filename, data, gridder, indent='', ncattrs=None, sup_vars=Non
         logging.info(indent + f"written file {filename}")
 
         return
+
+# =====================================================================
+
+def get_netcdf_var(ds, path):
+    """
+    Gets a variable from a netCDF using a path searching by groups.
+
+    Parameters
+    ----------
+    ds : netCDF4.Dataset
+    path : str
+
+    Returns
+    -------
+    netCDF4.Variable
+    """
+    var_origin = list(filter(None, path.split('/')))
+    retr_var = ds
+    while len(var_origin) > 1:
+        retr_var = retr_var.groups[var_origin.pop(0)]
+    return retr_var.variables[var_origin[0]]
 
 # =====================================================================

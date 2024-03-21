@@ -20,14 +20,13 @@ __all__ = [
 
 # === IMPORTS =========================================================
 
+import shapely
+import pyproj
 import numpy as np
 import pandas as pd
-import shapely
 from functools import partial
 from multiprocessing.pool import Pool, ThreadPool
-from pyproj import Geod
 from shapely.geometry import Polygon
-
 
 # =================================================================================
 def create_geo_dataset(geometries, **kwargs):
@@ -218,7 +217,8 @@ def get_areas(polygons, geod=None, workers=None):
     """
     if geod is None:
         # Default to WGS84 ellipsoid: proj = '+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
-        geod = Geod('+a=6378137 +f=0.0033528106647475126')
+        # geod = Geod('+a=6378137 +f=0.0033528106647475126')
+        geod = pyproj.CRS.from_epsg(4326).get_geod()
 
     if workers is None:
         areas = polygons.map(partial(get_area, geod=geod))
@@ -292,7 +292,8 @@ def are_over_pole(polygons, geod=None, workers=None):
     """
     if geod is None:
         # Default to WGS84 ellipsoid: proj = '+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
-        geod = Geod('+a=6378137 +f=0.0033528106647475126')
+        # geod = Geod('+a=6378137 +f=0.0033528106647475126')
+        geod = pyproj.CRS.from_epsg(4326).get_geod()
 
     if workers is None:
         over_pole = polygons.map(partial(is_over_pole, geod=geod))
