@@ -65,6 +65,11 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     elif isinstance(data, pd.DataFrame):
         data = data.to_dict(orient='series')
 
+    for k, v in data.items():
+        if v.shape[:polygons.ndim] != polygons.shape:
+            raise ValueError(f"Provided polygons should match first dimensions of data to be regridded. "
+                             f"Found {polygons.shape} and {v.shape} for {k}")
+
     if min_fill is not None:
         assert 0.0 < min_fill < 1.0, f"Minimum fill value has to be a fraction, {min_fill} not valid."
 
@@ -82,6 +87,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
 
     # ToDo: Implement KDtree and Rtree, check speeds.
     # Create and query STRtree
+    polygons = polygons.flatten()
     tree = shapely.STRtree(df_grid['polygon'].to_numpy())
     inters = tree.query(polygons)
 
@@ -109,12 +115,13 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
             if np.issubdtype(value.dtype, np.datetime64):
                 value = (value - datetime(1970, 1, 1)).dt.total_seconds()
                 to_datetime.append(key)
-            df_inter['var_'+key] = np.asarray(value)[inters[0]]
+            df_inter['var_'+key] = np.asarray(value).flatten()[inters[0]]
     else:
         df_inter['data'] = data[inters[0]]
 
     # Drop negative areas, undesired behaviour you will have
     df_inter = df_inter[df_inter['inter_area'] > 0.0]
+    logging.info(list(df_inter.columns))
 
     # Calculate the weighted contribution (value * area_fraction)
     for col in [col for col in df_inter if col.split('_')[0] == 'var']:
