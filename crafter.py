@@ -3,9 +3,17 @@
 =======================================================
 ===                   KINTUN-WENU                   ===
 =======================================================
--> CRAFTER
 
-Provides class to grid Kalkutun product
+CRAFTER MODULE
+------------------
+
+This module provides the GridCrafter class for adapting data to new grids based on the Kalkutun data class.
+
+The GridCrafter class enables the creation of regular grids and offers functionality for interpolation,
+filtering, and data conversion.
+
+Classes:
+    GridCrafter: A class for adapting data to new grids.
 """
 
 __all__ = [
@@ -15,6 +23,8 @@ __all__ = [
 # ============= IMPORTS ===============================
 
 import logging
+import sys
+
 import numpy as np
 
 from netCDF4 import Dataset
@@ -125,7 +135,6 @@ class GridCrafter:
             Indicates if the points are the corners or the centers of the grid (default: 'corners').
         """
         grid_lons, grid_lats = create_grid(grid_size, lon_lim, lat_lim, method)
-
         return cls(grid_lons, grid_lats, **kwargs)
 
     # -----------------------------------------------------------------------------
@@ -137,7 +146,6 @@ class GridCrafter:
 
     def regrid(self, product, varnames=None,
                qa_filter=None, coord_filter=None,
-               drop_negatives=False, drop_poles=False,
                **kwargs):
         """
         Perform a regridding over a product
@@ -153,10 +161,6 @@ class GridCrafter:
             Quality assurance filter to be applied.
         coord_filter : tuple
             Constrain the domain by masking values outside the limits given.
-        drop_negatives : bool, optional
-            Indicates if negative values should be considered or not.
-        drop_poles : bool, optional
-            Indicates if values over the poles should be considered or not. Be careful, this is slow.
         **kwargs : dict, optional
             Additional keyword arguments. Used for initialization of Kalkutun product.
 
@@ -165,8 +169,9 @@ class GridCrafter:
         np.ndarray
             2D-array with the weighted values.
         """
-
         kprod = product.copy() if isinstance(product, Kalkutun) else Kalkutun(product, **kwargs)
+
+        # ToDo: remove extra logging
         logging.info(f'Kalkutun variables: {list(kprod.variables.keys())}')
         logging.info(f"  grid_dimensions: {kprod.grid_dimensions}")
 
@@ -176,6 +181,7 @@ class GridCrafter:
         elif isinstance(varnames, str):
             varnames = tuple([varnames])
 
+        # ToDo: remove extra logging
         logging.info(f'Planning to regrid variables: {varnames}')
 
         if coord_filter is not None:
@@ -197,17 +203,13 @@ class GridCrafter:
         elif self.qa_filter is not None:
             kprod.qa_filter(varnames, self.qa_filter, inplace=True)
 
-        # df_obs = kprod.get_polygon_dataframe(
-        #     var_list=varnames, drop_masked=True, drop_invalid=True,
-        #     drop_poles=drop_poles, split_antimeridian=True, reset_index=True
-        # )
+        # ToDo: remove extra logging
+        # --- logging ---
         logging.info(list(kprod.variables.keys()))
         logging.info(varnames)
         data = {k: v['values'] for k, v in kprod.variables.items() if k in varnames}
         logging.info(f"variables to regrid: {list(data.keys())}")
-
-        # if drop_negatives is True:
-        #     data = {k: v.flatten()[v > 0.0] for k, v in data.items()}
+        # ---------------
 
         if not [v for k, v in data.items() if v.size > 0]:
             logging.warning(f"    No polygons left to regrid for {product}, returning None (might check masked data)")
@@ -224,7 +226,7 @@ class GridCrafter:
         else:
             raise NotImplementedError('Interpolation type not implemented')
 
-        logging.debug(f"  Finished gridding of product ({next(iter(regrid.values())).count()} valid values)")
+        logging.debug(f"  finished gridding of product ({next(iter(regrid.values())).count()} valid values)")
         return regrid
 
 # =================================================================================

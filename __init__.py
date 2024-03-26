@@ -15,6 +15,8 @@ Suitable for process, grid and visualize satellite data.
 __name__ = 'kintunwenu'
 __version__ = '2.0'
 __release__ = '2024-03'
+__author__ = 'Santiago Parraguez Cerda'
+__email__ = 'sanparra@uni-bremen.de'
 
 __all__ = [
     'Kalkutun',
@@ -24,7 +26,7 @@ __all__ = [
 # ===== IMPORTS =======================================
 from . import geodata
 from . import grid
-from . import netcdf as nc
+from . import nc_tools
 from . import plot
 from . import polygons
 from . import scrap

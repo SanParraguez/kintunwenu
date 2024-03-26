@@ -4,10 +4,16 @@
 ===                   KINTUN-WENU                   ===
 =======================================================
 
-KALKUTUN
---------
+KALKUTUN MODULE
+---------------
 
-Provides classes to handle different type of satellite datasets.
+This module provides the Kalkutun class for handling various types of satellite datasets.
+
+The Kalkutun class offers functionality for accessing, manipulating, and analyzing satellite product data.
+It includes methods for converting units, filtering data, and retrieving polygon information.
+
+Classes:
+    Kalkutun: A class for handling satellite netCDF datasets.
 """
 
 __all__ = [
@@ -23,7 +29,6 @@ import numpy as np
 from contextlib import nullcontext
 from netCDF4 import Dataset
 
-from .netcdf import get_netcdf_var
 from .units import standardise_unit_string, convert_units
 
 # =================================================================================
@@ -69,37 +74,44 @@ class Kalkutun:
         A dictionary containing information about the dimensions of the dataset.
     variables : dict
         A dictionary containing information about the variables in the dataset.
+    polygons : np.ndarray
+        Array containing the shapely.Polygon representation of the product's cells.
     grid_format : str
         The format of the grid coordinates, if available.
-    grid_vars : dict
-        A dictionary containing information about the grid variables, if available.
+    grid_dimensions : tuple
+        A tuple containing the dimension names of the spatial grid.
 
 
     Methods
     -------
-    copy()
+    copy(self)
         Creates a deep copy of the current object.
 
-    convert_units(varname, to_unit)
+    convert_units(self, varname, to_unit)
         Converts the units of the specified variable to the given unit.
 
-    get_polygons()
-        Retrieves an array of Polygon objects representing the grid cells of the dataset.
+    get_polygons(self)
+        Returns a list of Polygon objects created from the product's longitudes and latitudes.
+        For increased performance access directly to the 'polygons' attribute.
 
-    filter
+    filter(self, var, mask, inplace=True)
+        Filters the variable array based on the provided mask.
 
-    minmax_filter
-
-    qa_filter
+    minmax_filter(self, var, min_value=None, max_value=None, from_var=None, inplace=False)
+        Filters the variable array based on minimum and maximum values.
 
     coordinates_filter(self, var, *args, inplace=False, **kwargs)
         Filters the variable array based on coordinate borders.
+
+    qa_filter(self, var, min_value, inplace=False)
+        Filters the variable array based on a quality assurance (QA) value threshold.
+
 
     """
 
     __module__ = 'kintunwenu'
 
-    def __init__(self, dataset, grid_format=None, kw_grid=None, kw_attrs=None, kw_vars=None):
+    def __init__(self, dataset, grid_format=None, kw_grid=None, kw_vars=None, kw_attrs=None):
         """
         Initializes the Kalkutun object.
 
@@ -111,10 +123,10 @@ class Kalkutun:
             Format of the grid (default: None).
         kw_grid : dict, optional
             Dictionary containing grid information (default: None).
-        kw_attrs : dict, optional
-            Dictionary containing attribute information (default: None).
         kw_vars : dict, optional
             Dictionary containing variable information (default: None).
+        kw_attrs : dict, optional
+            Dictionary containing attribute information (default: None).
         """
         # Initialize parameters
         kw_grid = kw_grid or {}
@@ -143,7 +155,7 @@ class Kalkutun:
             self._process_grid(ds, grid_format, kw_grid)
 
         # ToDo: remove extra logging
-        # logging
+        # --- logging ---
         for k, v in self._variables.items():
             vtypes = {ki: type(vi).__name__ for ki, vi in v.items()}
             logging.info(f"{k[:25]:25}: {vtypes}")
@@ -160,6 +172,7 @@ class Kalkutun:
         logging.info(f"Longitude dims : {self._grid_vars['longitude']['dims']}")
 
         logging.info(self.polygons.flatten()[:3])
+        # ---------------
 
     # -----------------------------------------------------------------------------
 
@@ -193,7 +206,7 @@ class Kalkutun:
                 continue
 
             # get variable from file
-            retr_var = get_netcdf_var(dataset, var['path'])
+            retr_var = dataset[var['path']]
 
             # get dimensions
             var_dims = retr_var.dimensions
@@ -245,8 +258,8 @@ class Kalkutun:
         if grid_format == 'corners':
 
             dim = kw_grid['dimension']
-            lat_var = get_netcdf_var(dataset, kw_grid['latitude']['path'])
-            lon_var = get_netcdf_var(dataset, kw_grid['longitude']['path'])
+            lat_var = dataset[kw_grid['latitude']['path']]
+            lon_var = dataset[kw_grid['longitude']['path']]
 
             if lat_var.dimensions != lon_var.dimensions:
                 raise ValueError(f"Variables of longitudes and latitudes have different dimensions: "
@@ -371,6 +384,10 @@ class Kalkutun:
         -------
         None
         """
+        # ToDo: implementation for tuple of varnames
+        #   this could be a problem when transforming some variables before
+        #   an error rises
+
         to_unit = standardise_unit_string(to_unit)
 
         self.variables[varname]['values'] = convert_units(
@@ -518,39 +535,6 @@ class Kalkutun:
 
     # -----------------------------------------------------------------------------
 
-    def qa_filter(self, var, min_value, inplace=False):
-        """
-        Filter the variable array based on a quality assurance (QA) value threshold.
-
-        Parameters
-        ----------
-        var : str or tuple
-            Variable name or tuple of variable names to be filtered
-        min_value : float
-            The minimum QA value to retain data.
-        inplace : bool, optional
-            If True, the function applies the masking operation on the data array in-place.
-            If False, the function returns a new masked array (default).
-
-        Returns
-        -------
-        None or np.ma.MaskedArray or tuple of np.ma.MaskedArray
-            If inplace is False and var is a single variable, a masked array with values below the minimum QA value
-            masked is returned. If var is a tuple, a tuple of masked arrays is returned.
-            If inplace is True, None is returned.
-        """
-        if 'qa_value' not in self.variables:
-            raise AttributeError("Could not find 'qa_value' in between variables, please redefine your quality flag "
-                                 "variable or use the minmax_filter method with the name of your variable.")
-
-        if (self.variables['qa_value']['values'] == 0.0).all() is True:
-            logging.error('Product seems to not have any valid quality value')
-            raise ValueError('All quality flag values are equal to 0')
-
-        return self.minmax_filter(var=var, min_value=min_value, from_var='qa_value', inplace=inplace)
-
-    # -----------------------------------------------------------------------------
-
     def coordinates_filter(self, var, *args, inplace=False, **kwargs):
         """
         Filters the variable array based on coordinate borders.
@@ -617,5 +601,55 @@ class Kalkutun:
             return self.filter(var, mask, inplace)
 
         return tuple(self.filter(v, mask, inplace) for v in var)
+
+    # -----------------------------------------------------------------------------
+
+    def qa_filter(self, var, min_value, inplace=False):
+        """
+        Filter the variable array based on a quality assurance (QA) value threshold.
+
+        Parameters
+        ----------
+        var : str or tuple
+            Variable name or tuple of variable names to be filtered
+        min_value : float
+            The minimum QA value to retain data.
+        inplace : bool, optional
+            If True, the function applies the masking operation on the data array in-place.
+            If False, the function returns a new masked array (default).
+
+        Returns
+        -------
+        None or np.ma.MaskedArray or tuple of np.ma.MaskedArray
+            If inplace is False and var is a single variable, a masked array with values below the minimum QA value
+            masked is returned. If var is a tuple, a tuple of masked arrays is returned.
+            If inplace is True, None is returned.
+        """
+        if 'qa_value' not in self.variables:
+            raise AttributeError("Could not find 'qa_value' in between variables, please redefine your quality flag "
+                                 "variable or use the minmax_filter method with the name of your variable.")
+
+        if (self.variables['qa_value']['values'] == 0.0).all() is True:
+            logging.error('Product seems to not have any valid quality value')
+            raise ValueError('All quality flag values are equal to 0')
+
+        return self.minmax_filter(var=var, min_value=min_value, from_var='qa_value', inplace=inplace)
+
+    # -----------------------------------------------------------------------------
+
+    def pole_filter(self, var, tol=1e-3, inplace=False):
+        """
+
+        Parameters
+        ----------
+        var
+        tol
+        inplace
+
+        Returns
+        -------
+
+        """
+
 
 # =================================================================================

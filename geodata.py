@@ -29,6 +29,7 @@ from multiprocessing.pool import Pool, ThreadPool
 from shapely.geometry import Polygon
 
 # =================================================================================
+
 def create_geo_dataset(geometries, **kwargs):
     """
     Creates a pandas DataFrame that combines Shapely Polygon objects and data values.
@@ -203,7 +204,7 @@ def get_areas(polygons, geod=None, workers=None):
 
     Parameters
     ----------
-    polygons : pd.Series of shapely.geometry.Polygon
+    polygons : pd.Series[shapely.geometry.Polygon]
         Series of input polygons.
     geod : pyproj.Geod, optional
         Geodetic calculator object, defaults to None (i.e., use the WGS84 ellipsoid).

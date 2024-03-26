@@ -102,7 +102,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     )
 
     # Calculate intersection areas (intersections are 'inverted' so we multiply by -1)
-    df_inter['inter_area'] = -1 * get_areas(df_inter['polygon'], geod=geod, workers=workers)
+    df_inter['inter_area'] = np.abs(get_areas(df_inter['polygon'], geod=geod, workers=workers))
 
     # Calculate fraction of the cell covered by the intersected polygon
     df_inter['coverage'] = df_inter['inter_area'] / df_inter['area']
@@ -179,8 +179,8 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
 
     return grid_values
 
-
 # =================================================================================
+
 def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corners'):
     """
     Creates equally spaced grid cells.
@@ -219,8 +219,8 @@ def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corne
 
     return grid_lon, grid_lat
 
-
 # =================================================================================
+
 def create_geo_grid(lons, lats, mode='corners'):
     """
     Generates a Geo-DataFrame containing a grid of polygons defined by the input latitude and longitude coordinates.

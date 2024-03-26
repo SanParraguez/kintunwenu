@@ -3,12 +3,15 @@
 =======================================================
 ===                   KINTUN-WENU                   ===
 =======================================================
--> UTILS
+
+UTILS MODULE
+------------
 
 Provides useful functions for the package.
 """
 __all__ = [
     'timeit',
+    'pick_random_value'
 ]
 
 # ============= IMPORTS ===============================
