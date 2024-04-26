@@ -133,6 +133,14 @@ class Kalkutun:
         kw_attrs = kw_attrs or {}
         kw_vars = kw_vars or {}
 
+        # Initialize class attributes
+        self._dimensions = {}
+        self._variables = {}
+        self._grid_format = grid_format
+        self._grid_vars = {}
+        self._polygons = None
+        self._from_formula = []
+
         # *** Initialize dataset ***
         # Do not close the dataset after reading, assuming that it could be used inside
         # another 'with' statement outside this class.
@@ -140,14 +148,6 @@ class Kalkutun:
         if not isinstance(dataset, Dataset):
             dataset = Dataset(dataset)
             to_context = True
-
-        # Initialize class attributes
-        self._dimensions = {}
-        self._variables = {}
-        self._grid_format = grid_format
-        self._grid_vars = {}
-        self._polygons = None
-        self._from_formula = None
 
         # Open file and retrieve information
         with dataset if to_context else nullcontext(dataset) as ds:
@@ -220,12 +220,12 @@ class Kalkutun:
             }
 
             # get attributes
-            to_get = var.get('getattr')
+            to_get = var.get('getattr', [])
             for j in to_get:
                 self._variables[var['name']]['attrs'][j] = getattr(retr_var, j)
 
             # set attributes
-            to_set = var.get('setattr')
+            to_set = var.get('setattr', [])
             for j in to_set:
                 self._variables[name]['attrs'][j] = to_set[j]
 
@@ -237,7 +237,7 @@ class Kalkutun:
             if to_unit is not None:
                 self.convert_units(name, to_unit)
 
-        self._from_formula = to_formula
+        self._from_formula += to_formula
 
     # -----------------------------------------------------------------------------
 
@@ -273,6 +273,9 @@ class Kalkutun:
             }
 
         elif grid_format is not None:
+            logging.error(f"method {grid_format} not implemented.")
+            logging.error(f"current methods available:")
+            logging.error(f"  corners")
             raise NotImplementedError(f'Reading of coordinates format {grid_format} not implemented')
 
     # -----------------------------------------------------------------------------
@@ -594,8 +597,8 @@ class Kalkutun:
         logging.info(bounds.shape)
         logging.info(bounds.flatten()[0])
         logging.info([lon_min, lon_max, lat_min, lat_max])
-        mask = (bounds[..., 0] > lon_min) | (bounds[..., 1] > lat_min) | \
-               (bounds[..., 2] < lon_max) | (bounds[..., 3] < lat_max)
+        mask = (bounds[..., 0] > lon_max) | (bounds[..., 1] > lat_max) | \
+               (bounds[..., 2] < lon_min) | (bounds[..., 3] < lat_min)
 
         if isinstance(var, str):
             return self.filter(var, mask, inplace)
@@ -651,5 +654,19 @@ class Kalkutun:
 
         """
 
+    # -----------------------------------------------------------------------------
+
+    def invalid_filter(self, var, inplace=False):
+        """
+
+        Parameters
+        ----------
+        var
+        inplace
+
+        Returns
+        -------
+
+        """
 
 # =================================================================================

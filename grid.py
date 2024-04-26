@@ -22,9 +22,7 @@ from datetime import datetime
 from .geodata import get_intersections, get_areas
 from .polygons import get_corners_from_grid
 
-
 # =================================================================================
-
 def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None, **kwargs):
     """
     Performs a weighted regridding of polygons into a given regular grid.
@@ -80,6 +78,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
         grid_shape = (grid_lat.shape[0]-1, grid_lon.shape[0]-1)
 
     # Get areas for single column and fill through longitudes
+    # ToDo: calculate efficiently area for general grid (this do not work if grid is not regular)
     df_grid['area'] = df_grid[df_grid['xi'] == 0]['polygon'].map(
         lambda poly: geod.geometry_area_perimeter(poly)[0]
     )
@@ -87,8 +86,8 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
 
     # ToDo: Implement KDtree and Rtree, check speeds.
     # Create and query STRtree
-    polygons = polygons.flatten()
     tree = shapely.STRtree(df_grid['polygon'].to_numpy())
+    polygons = polygons.flatten()
     inters = tree.query(polygons)
 
     # Create GeoDataFrame with intersections

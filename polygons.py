@@ -156,11 +156,17 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
         List of the new polygons if input data was None.
         Tuple of the new polygons and the masked data array if input data was not None.
     """
+    # ToDo: remove masked values before splitting or return masked array
+    # ToDO: bug when multidimensional array is provided
+
     if isinstance(polygons, pd.Series):
         polygons = polygons.to_numpy()
     elif isinstance(polygons, pd.DataFrame) and data is None:
         data = polygons.copy()
         polygons = data.pop('geometry')
+
+    if data is None:
+        data = {}
 
     antimeridian = create_meridian(180.)
 
@@ -218,38 +224,39 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
 
     else:
         raise NotImplementedError('Support for lists will be implemented')
+
     # -------------------------------
 
-    if data is not None:
+    # Split provided data if available
 
-        if isinstance(data, pd.Series):
-            data = data.to_numpy()
-        elif isinstance(data, pd.DataFrame):
-            data = data.to_dict(orient='series')
-        elif isinstance(data, list):
-            data = np.asarray(data)
+    if isinstance(data, pd.Series):
+        data = data.to_numpy()
+    elif isinstance(data, pd.DataFrame):
+        data = data.to_dict(orient='series')
+    elif isinstance(data, list):
+        data = np.asarray(data)
 
-        if isinstance(data, np.ndarray):
-            data, new_data = data[~anomaly], data[anomaly]
-            new_data = np.ma.concatenate([np.tile(d, (n, 1)) for d, n in zip(new_data, repeat_index)]).squeeze()
-            data = np.concatenate([data, new_data])
-        elif isinstance(data, dict):
-            # ToDo: check bugs or need of using ma module on concatenate.
-            """
-            In case of having a dictionary, we iterate over the variables. For each one, we split the 'anomaly' 
-            values and then we repeat (tile) them n times. The squeeze works for the case of single dimension,
-            when we have n-dimensional data this does nothing. Finally, we concatenate the old with the repeated
-            values. Here, np.stack() does the trick of converting the pd.Series values into a single array that can
-            be properly concatenated. 
-            Not sure about np.ma.concatenated and then the normal one. Should be checked for bugs eventually.
-            """
-            for key, value in data.items():
-                value = np.asarray(value)
-                value, new_value = value[~anomaly], value[anomaly]
-                new_value = np.ma.concatenate([np.tile(d, (n, 1)) for d, n in zip(new_value, repeat_index)]).squeeze()
-                data[key] = np.concatenate([np.stack(value), new_value])
-        else:
-            raise TypeError(f'Data type {type(data)} not supported')
+    if isinstance(data, np.ndarray):
+        data, new_data = data[~anomaly], data[anomaly]
+        new_data = np.ma.concatenate([np.tile(d, (n, 1)) for d, n in zip(new_data, repeat_index)]).squeeze()
+        data = np.concatenate([data, new_data])
+    elif isinstance(data, dict):
+        # ToDo: check bugs or need of using ma module on concatenate.
+        """
+        In case of having a dictionary, we iterate over the variables. For each one, we split the 'anomaly' 
+        values and then we repeat (tile) them n times. The squeeze works for the case of single dimension,
+        when we have n-dimensional data this does nothing. Finally, we concatenate the old with the repeated
+        values. Here, np.stack() does the trick of converting the pd.Series values into a single array that can
+        be properly concatenated. 
+        Not sure about np.ma.concatenated and then the normal one. Should be checked for bugs eventually.
+        """
+        for key, value in data.items():
+            value = np.asarray(value)
+            value, new_value = value[~anomaly], value[anomaly]
+            new_value = np.ma.concatenate([np.tile(d, (n, 1)) for d, n in zip(new_value, repeat_index)]).squeeze()
+            data[key] = np.concatenate([np.stack(value), new_value])
+    else:
+        raise TypeError(f'Data type {type(data)} not supported')
 
     polygons = np.concatenate([polygons, new_polygons])
 

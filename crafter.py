@@ -184,6 +184,7 @@ class GridCrafter:
         # ToDo: remove extra logging
         logging.info(f'Planning to regrid variables: {varnames}')
 
+        # ToDo: should split_polygons be applied mandatory?
         if coord_filter is not None:
             kprod.coordinates_filter(varnames, coord_filter, inplace=True)
         else:
