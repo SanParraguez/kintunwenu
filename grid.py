@@ -29,9 +29,9 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
 
     Parameters
     ----------
-    grid_lon : np.ndarray, shape (j,)
+    grid_lon : np.ndarray, shape (j, )
         Gridded longitudes corners.
-    grid_lat : np.ndarray, shape (i,)
+    grid_lat : np.ndarray, shape (i, )
         Gridded latitudes corners.
     polygons : list or pd.Series or np.ndarray of Polygon, len (n)
         The n polygons to be regridded.
@@ -78,7 +78,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
         grid_shape = (grid_lat.shape[0]-1, grid_lon.shape[0]-1)
 
     # Get areas for single column and fill through longitudes
-    # ToDo: calculate efficiently area for general grid (this do not work if grid is not regular)
+    # ToDo: calculate efficiently area for general grid (current approach does not work if grid is not regular)
     df_grid['area'] = df_grid[df_grid['xi'] == 0]['polygon'].map(
         lambda poly: geod.geometry_area_perimeter(poly)[0]
     )
@@ -153,7 +153,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     # Include covered fraction into data for output
     df_inter.rename(columns={'coverage': 'var_coverage', 'count': 'var_count'}, inplace=True)
     df_grid['var_coverage'] = df_inter['var_coverage']
-    df_grid['var_count'] = df_inter['var_count']
+    df_grid['var_count'] = df_inter['var_count'].astype(int)
 
     grid_values = {}
     for col in df_inter:

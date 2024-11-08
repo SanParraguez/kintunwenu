@@ -11,7 +11,7 @@ Contains functions for handling NetCDF files.
 """
 __all__ = [
     'get_netcdf_var',
-    'write_netcdf_file',
+    'writeGridFile',
 ]
 
 # === IMPORTS =========================================================
@@ -239,7 +239,7 @@ def get_netcdf_var(ds, path):
 
 # =====================================================================
 
-def write_netcdf_file(filename, variables=None, root_attrs=None, clobber=False):
+def writeGridFile(filename, variables=None, root_attrs=None, clobber=False):
     """
 
     Parameters
@@ -275,7 +275,10 @@ def write_netcdf_file(filename, variables=None, root_attrs=None, clobber=False):
         # Add variables to file
         for name, value in variables.items():
 
-            var_dimensions = value.pop('dimensions')
+            logging.info(f"Writing variable '{name}'")
+            logging.info(f"    dims: {value['dims']}")
+
+            var_dimensions = value.pop('dims')
             var = ds.createVariable(name, var_dimensions)
             var[:] = value.pop('values', None)
 

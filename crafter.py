@@ -23,10 +23,7 @@ __all__ = [
 # ============= IMPORTS ===============================
 
 import logging
-import sys
-
 import numpy as np
-
 from netCDF4 import Dataset
 
 from .grid import create_grid, weighted_regrid
