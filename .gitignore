@@ -1,0 +1,5 @@
+# PyCharm stop bothering
+/.idea
+
+# Python cache
+/__pycache__
