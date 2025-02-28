@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 =======================================================
 ===                   KINTUN-WENU                   ===
@@ -17,15 +16,19 @@ __all__ = [
 import logging
 import numpy as np
 import pandas as pd
+import pyproj
 import shapely
+import geopandas as gpd
 from datetime import datetime
 from .geodata import get_intersections, get_areas
 from .polygons import get_corners_from_grid
 
+import time
+
 
 # =================================================================================
 
-def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None, **kwargs):
+def weighted_regrid(grid_lon, grid_lat, grid_dims, polygons, data, min_fill=None, crs=None, **kwargs):
     """
     Performs a weighted regridding of polygons into a given regular grid.
 
@@ -35,78 +38,190 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
         Gridded longitudes corners.
     grid_lat : np.ndarray, shape (i, )
         Gridded latitudes corners.
+    grid_dims : tuple
+        A tuple containing names of grid dimensions.
     polygons : list or pd.Series or np.ndarray of Polygon, len (n)
         The n polygons to be regridded.
-    data : list or pd.Series or np.ndarray or dict or pd.DataFrame, shape (n,)
-        The values of each polygon.
+    data : dict
+        The variables with values and dimensions assigned to each polygon.
     min_fill : float
         Minimum fraction of cell area needed to consider the cell new value valid.
-        If not achieved, it is keep as nan. Using this parameter could lead to a
+        If not achieved, it is kept as NaN. Using this parameter could lead to a
         decrease in performance.
-    geod : pyproj.Geod
+    crs : str
+        A crs for calculating area and perimeter (default: WGS84).
 
     Returns
     -------
     dict
-        Regridded values with shape (i-1, j-1).
+        A dictionary with regridded values, where each key corresponds to a variable
+        and contains a dict with updated 'values' and 'dims'.
     """
-    threads = kwargs.pop('threads', None)
-    workers = kwargs.pop('workers', None)
+    # Validate input grid
+    regular_grid = is_regular_grid(grid_lat, grid_lon)
+    if not regular_grid:
+        raise NotImplementedError("Irregular grids are not supported yet.")
 
+    # Validate input polygons
     if isinstance(polygons, list):
         polygons = np.array(polygons)
     elif isinstance(polygons, pd.Series):
         polygons = polygons.to_numpy()
 
-    if isinstance(data, list):
-        data = np.array(data)
-    elif isinstance(data, pd.Series):
-        data = data.to_frame().to_dict(orient='series')
-    elif isinstance(data, pd.DataFrame):
-        data = data.to_dict(orient='series')
+    # Validate input data
+    if not isinstance(data, dict):
+        raise TypeError("data must be a dictionary with 'values' and 'dims'")
 
-    for k, v in data.items():
-        if v.shape[:polygons.ndim] != polygons.shape:
-            raise ValueError(f"Provided polygons should match first dimensions of data to be regridded. "
-                             f"Found {polygons.shape} and {v.shape} for {k}")
+    # Validate dictionary keys and dimensions
+    for key, value in data.items():
+        if 'values' not in value or 'dims' not in value:
+            raise ValueError(f"Each variable in data must contain 'values' and 'dims'. Missing in {key}")
+        if not set(value['dims']).issuperset(grid_dims):
+            raise ValueError(f"dimensions of variables should be a superset of grid_dims for the regridding.")
 
+    # Validate min_fill condition
     if min_fill is not None:
-        assert 0.0 < min_fill < 1.0, f"Minimum fill value has to be a fraction, {min_fill} not valid."
+        if not (0.0 < min_fill < 1.0):
+            raise ValueError(f"min_fill must be a fraction between 0 and 1. Got {min_fill}.")
 
-    df_grid = create_geo_grid(grid_lon, grid_lat, mode='corners')
+    # Validate polygons dimensions
+    # ToDo: handle when polygons come with more dimensions, not just the grid_dimensions
+    if polygons.ndim != len(grid_dims):
+        raise NotImplementedError(f"Multiple retrievals not implemented. polygons.shape and grid_dims "
+                                  f"should have same length")
+
+    # Assign default crs
+    if crs is None:
+        crs = 'WGS84'
+
+    # ***
+
+    # Initialize geoseries
+    gdf = gpd.GeoSeries(polygons.flatten(), crs=crs)
+
+    # Filter invalid polygons and store indexes for data
+    valid_polygons = gdf.is_valid
+    gdf = gdf[valid_polygons]
+
+    # Generate grid dataframe
+    gdf_grid = create_geo_grid(grid_lon, grid_lat, mode='corners', crs=crs)
+
+    # Create grid tree and query using STRtree
+    intersections = gdf_grid['geometry'].sindex.query(gdf)
+    if intersections.size == 0:
+        return None
+
+    logging.info(f"len(inter[0]): {len(intersections[0])}, len(inter[1]): {len(intersections[1])}")
+    logging.info(intersections)
+
+    # Calculate grid areas in square meters
+    if regular_grid:
+        gdf_grid['cell_area'] = gdf_grid[gdf_grid['xi'] == 0].to_crs(epsg=6933).area
+        gdf_grid['cell_area'] = gdf_grid['cell_area'].ffill()
+    else:
+        gdf_grid['cell_area'] = gdf_grid.to_crs(epsg=6933).area
+
+    logging.info(gdf_grid)
+
+    # Filter by intersections
+    gdf_inter = gdf_grid.loc[intersections[1], ('xi', 'yi', 'geometry')]
+    gdf_inter['poly_idx'] = intersections[0]
+
+    # Calculate intersection geometry with pixels and get new areas
+    gdf_inter['geometry'] = gdf_inter['geometry'].intersection(gdf.loc[intersections[0]], align=False)
+    # gdf_inter['geometry'] = gdf_inter['geometry'].intersection(gdf.loc[gdf_inter['poly_idx']].reset_index(drop=True))
+    gdf_inter['inter_area'] = gdf_inter['geometry'].to_crs(epsg=6933).area
+    # # ToDo: add count without breaking groupby
+    # gdf_inter['count'] = 1
+
+    logging.info(gdf_inter)
+
+    # Calculate fraction of the cell covered by the intersected polygon
+    gdf_grid = gdf_grid.set_index(['xi', 'yi'])
+    gdf_grid['inter_area'] = gdf_inter.drop(['geometry', 'poly_idx'], axis=1).groupby(['xi', 'yi']).sum()
+    gdf_grid['coverage'] = gdf_grid['inter_area'] / gdf_grid['cell_area']
+
+    logging.info(gdf_grid)
+
+    # ***
+
+    # Iterate over dictionary
+    for key, value in data.items():
+
+        # Get data and dimensions
+        values = np.asarray(value['values'])
+        dims = value['dims']
+
+        # Get dimensions to regrid
+        grid_dim_indices = [dims.index(dim) for dim in grid_dims]
+        other_dim_indices = [i for i in range(len(dims)) if i not in grid_dim_indices]
+
+        logging.info(f"grid_dim_indices: {grid_dim_indices}, other_dim_indices: {other_dim_indices}")
+
+        # Reorder the axes to bring grid dimensions to the front
+        reordering = grid_dim_indices + other_dim_indices
+        reordered_values = np.transpose(values, axes=reordering)
+
+        # Flatten the reordered array along the grid dimensions
+        grid_shape = reordered_values.shape[:len(grid_dims)]
+        other_shape = reordered_values.shape[len(grid_dims):]
+
+        logging.info(f"grid_shape: {grid_shape}, other_shape: {other_shape}")
+
+        # Flatten along the grid dimensions while keeping extra dimensions intact
+        flat_values = reordered_values.reshape((-1,) + other_shape)[valid_polygons]
+
+        logging.info(f"flat_values shape: {flat_values.shape}")
+        logging.info(f"poly_idx shape: {gdf_inter['poly_idx'].shape}")
+
+        # Initialize an array for the output
+        output_shape = (grid_lon.size - 1, grid_lat.size - 1) + other_shape
+        new_values = np.zeros(output_shape)
+
+        # Iterate over the additional dimensions
+        for idx in np.ndindex(*other_shape):
+            # Slice along the extra dimensions
+            slice_values = flat_values[:, idx].squeeze()
+
+            logging.info(f"slice_idx: {idx}")
+            logging.info(f"slice_values.shape: {slice_values.shape}")
+
+            # Map values to polygons
+            gdf_data = gdf_inter[['xi', 'yi']].copy()
+            gdf_data['weighted_value'] = slice_values[gdf_inter['poly_idx']] * gdf_inter['inter_area']
+
+            # Aggregate weighted values by grid cell and normalize
+            weighted_sum = gdf_data.groupby(['xi', 'yi'])['weighted_value'].sum()
+            normalized_values = (weighted_sum / gdf_grid['coverage']).fillna(0)
+
+            # Reshape normalized values back into the grid
+            reshaped_values = normalized_values.unstack(fill_value=0).values
+            new_values[..., idx] = reshaped_values[..., None]
+
+        # # Flatten the reordered array along the grid dimensions
+        # # grid_shape = reordered_values.shape[:len(grid_dims)]
+        # other_shape = reordered_values.shape[len(grid_dims):]
+        # flat_values = reordered_values.reshape((-1,) + other_shape)[valid_polygons]
+        #
+        # logging.info(f"flat_values shape: {flat_values.shape}")
+        # logging.info(f"poly_idx shape: {gdf_inter['poly_idx'].shape}")
+        #
+        # # Map values to corresponding polygons
+        # gdf_data = gdf_inter[['xi', 'yi']].copy()
+        # gdf_data['weighted_value'] = flat_values[gdf_inter['poly_idx']] * gdf_inter['inter_area']
+        #
+        # # Aggregate weighted values by grid cell and normalize
+        # new_values = gdf_data.groupby(['xi', 'yi'])['weighted_value'].sum()
+        # new_values /= gdf_grid['coverage']
+        #
+        # logging.info(new_values)
+
+
+    # Obtain grid shape
     if grid_lon.ndim > 1:
         grid_shape = tuple(dim-1 for dim in grid_lon.shape)
     else:
         grid_shape = (grid_lat.shape[0]-1, grid_lon.shape[0]-1)
-
-    # Get areas for single column and fill through longitudes
-    # ToDo: calculate efficiently area for general grid (current approach does not work if grid is not regular)
-    df_grid['area'] = df_grid[df_grid['xi'] == 0]['polygon'].map(
-        lambda poly: geod.geometry_area_perimeter(poly)[0]
-    )
-    df_grid['area'].ffill(inplace=True)
-
-    # ToDo: Implement KDtree and Rtree, check speeds.
-    # Create and query STRtree
-    tree = shapely.STRtree(df_grid['polygon'].to_numpy())
-    polygons = polygons.flatten()
-    inters = tree.query(polygons)
-
-    # Create GeoDataFrame with intersections
-    df_inter = df_grid.loc[inters[1], 'area'].to_frame()
-
-    # Get intersection polygons
-    df_inter['polygon'] = get_intersections(
-        df_grid.loc[inters[1], 'polygon'].to_numpy(),
-        polygons[inters[0]],
-        threads=threads
-    )
-
-    # Calculate intersection areas (intersections are 'inverted' so we multiply by -1)
-    df_inter['inter_area'] = np.abs(get_areas(df_inter['polygon'], geod=geod, workers=workers))
-
-    # Calculate fraction of the cell covered by the intersected polygon
-    df_inter['coverage'] = df_inter['inter_area'] / df_inter['area']
 
     # ToDo: change to avoid datetime calculations and just use timestamp in seconds since 1970
     #   this should increase performance
@@ -132,6 +247,10 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
                                                         axis=tuple(range(1, var_col.ndim))))]
         else:
             df_inter[col] = var_col * df_inter['coverage']
+    # # Normalize by total coverage if greater than 100%
+    # df_inter['normalized_weight'] = df_inter['coverage'] / df_inter['coverage'].sum()
+    # for col in [col for col in df_inter if col.startswith('var_')]:
+    #     df_inter[col] *= df_inter['normalized_weight']
 
     # Add up all the contributions per cell (now 'coverage' will be the total fraction of the cell covered)
     #    groupby seems to work from pandas v2.0
@@ -231,7 +350,7 @@ def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corne
 
 # =================================================================================
 
-def create_geo_grid(lons, lats, mode='corners'):
+def create_geo_grid(lons, lats, mode='corners', crs=None):
     """
     Generates a Geo-DataFrame containing a grid of polygons defined by the input latitude and longitude coordinates.
 
@@ -254,6 +373,9 @@ def create_geo_grid(lons, lats, mode='corners'):
             - 'yi': The y index of the cell.
             - 'polygon': The Shapely Polygon object representing the cell.
     """
+    if crs is None:
+        crs = 'WGS84'
+
     lons = np.array(lons)
     lats = np.array(lats)
     if lons.ndim == 1 and lats.ndim == 1:
@@ -272,12 +394,45 @@ def create_geo_grid(lons, lats, mode='corners'):
     grid_xi = np.tile(np.arange(grid_shape[1] - 1), grid_shape[0] - 1)
     grid_yi = np.arange(grid_shape[0] - 1).repeat(grid_shape[1] - 1)
 
-    df_grid = pd.DataFrame({
+    df_grid = gpd.GeoDataFrame({
         'xi': grid_xi,
         'yi': grid_yi,
-        'polygon': polys_grid
-    })
+        'geometry': polys_grid
+    }, crs=crs)
 
     return df_grid
+
+
+# =================================================================================
+
+def is_regular_grid(grid_lat, grid_lon):
+    """
+    Checks whether the given longitude and latitude arrays define a regular grid.
+
+    Parameters
+    ----------
+    grid_lon : np.ndarray
+        Array of grid longitudes (can be 1D or 2D).
+    grid_lat : np.ndarray
+        Array of grid latitudes (can be 1D or 2D).
+
+    Returns
+    -------
+    bool
+        True if the grid is regular, False otherwise.
+    """
+    if grid_lon.ndim == 2 and grid_lat.ndim == 2:
+        # Check for consistent spacing along both dimensions
+        lon_diff_row = np.diff(grid_lon, axis=1)
+        lat_diff_col = np.diff(grid_lat, axis=0)
+        if not (np.allclose(lon_diff_row, lon_diff_row[0, :]) and
+                np.allclose(lat_diff_col, lat_diff_col[:, 0])):
+            return False
+    elif grid_lon.ndim == 1 and grid_lat.ndim == 1:
+        # 1D arrays are regular by definition
+        pass
+    else:
+        raise ValueError("grid_lon and grid_lat must be either both 1D or both 2D.")
+    return True
 
 # =================================================================================

@@ -11,6 +11,7 @@ Contains functions for handling NetCDF files.
 """
 __all__ = [
     'get_netcdf_var',
+    'writeNcFile',
     'writeGridFile',
 ]
 
@@ -19,7 +20,7 @@ import logging
 import os
 import sys
 import datetime
-
+import numpy as np
 from netCDF4 import Dataset
 
 # === FUNCTIONS =======================================================
@@ -239,22 +240,37 @@ def get_netcdf_var(ds, path):
 
 # =====================================================================
 
-def writeGridFile(filename, variables=None, root_attrs=None, clobber=False):
+def writeNcFile(filename, variables=None, dimensions=None, root_attrs=None, clobber=False):
     """
+    Creates a NetCDF file with specified variables, dimensions, and root attributes.
 
     Parameters
     ----------
-    filename
-    variables
-    root_attrs
-    clobber
+    
+    filename : str
+        Path to the output NetCDF file.
+    variables : dict, optional
+        Dictionary of variables with each entry in the format:
+        `name: {'dims': tuple, 'dtype': data type, 'data': array-like, <attr>: <value>, ...}`.
+        - 'dims' defines variable dimensions (must match a key in `dimensions`).
+        - 'dtype' specifies the data type (e.g., 'float32').
+        - 'data' holds the data array (optional).
+        - Additional key-value pairs set variable attributes.
+    dimensions : dict, optional
+        Dictionary of dimensions with each entry in the format `name: size`.
+        - `name` is the dimension name, and `size` is an integer or `None` for unlimited dimensions.
+    root_attrs : dict, optional
+        Metadata attributes for the file root in `name: value` format.
+    clobber : bool, optional
+        If True, overwrites the file if it exists (default is False).
 
     Returns
     -------
-
+        None
     """
-    root_attrs = root_attrs or {}
     variables = variables or {}
+    dimensions = dimensions or {}
+    root_attrs = root_attrs or {}
 
     # Default attributes
     root_attrs['module'] = f"KintunWenu v{sys.modules[__package__].__version__} " \
@@ -272,18 +288,76 @@ def writeGridFile(filename, variables=None, root_attrs=None, clobber=False):
         for k, v in root_attrs.items():
             setattr(ds, k, v)
 
+        # Add dimensions to file
+        for name, value in dimensions.items():
+            dim = ds.createDimension(name, value)
+
+            logging.info(f"Created dimension {name}: {value}")
+
         # Add variables to file
         for name, value in variables.items():
 
+            # ToDo: remove extra logging
             logging.info(f"Writing variable '{name}'")
             logging.info(f"    dims: {value['dims']}")
 
-            var_dimensions = value.pop('dims')
-            var = ds.createVariable(name, var_dimensions)
-            var[:] = value.pop('values', None)
+            var = ds.createVariable(name, value.pop('dtype'), value.pop('dims'))
+            var[:] = value.pop('data', None)
 
-            for val_name, val_value in value.items():
-                setattr(var, val_name, val_value)
+            for k, var_attr in value.items():
+                setattr(var, k, var_attr)
 
+    return
+
+# =====================================================================
+
+def writeGridFile(filename, grid_lats, grid_lons, grid_type='corners', **kwargs):
+    """
+    Creates a NetCDF grid file with latitude and longitude values.
+
+    Parameters
+    ----------
+
+    filename : str
+        Path to the output NetCDF file.
+    grid_lats : array-like
+        Array of latitude values (e.g., 1D array).
+    grid_lons : array-like
+        Array of longitude values (e.g., 1D array).
+    grid_type : str, optional (default='corners')
+        Type of grid ('corners' for a grid with corner points).
+    **kwargs :
+        Additional keyword arguments passed to `writeNcFile`, such as `variables`, `dimensions`, and others.
+
+    Returns
+    -------
+        None
+    """
+
+    raw_variables = kwargs.pop('variables', {})
+    raw_dimensions = kwargs.pop('dimensions', {})
+
+    for k, var in raw_variables.items():
+        if 'dtype' not in var:
+            raw_variables[k].update({'dtype': var['data'].dtype})
+
+    grid_lats, grid_lons = np.asarray(grid_lats), np.asarray(grid_lons)
+
+    # Here we assume a regular grid, once again...
+    if grid_type == 'corners':
+        lats = (grid_lats[1:] + grid_lats[:-1]) / 2
+        lons = (grid_lons[1:] + grid_lons[:-1]) / 2
+        lons, lats = np.meshgrid(lons, lats)
+    else:
+        NotImplementedError(f"Grid method {grid_type} not implemented, you might be the chosen one to do it.")
+
+    dimensions = {**{'latitude': grid_lats.size-1, 'longitude': grid_lons.size-1}, **raw_dimensions}
+    variables = {**{
+        'latitude' : {'dims': ('latitude', 'longitude'), 'dtype': lats.dtype, 'data': lats},
+        'longitude': {'dims': ('latitude', 'longitude'), 'dtype': lons.dtype, 'data': lons},
+    }, **raw_variables}
+
+    return writeNcFile(filename, dimensions=dimensions, variables=variables, **kwargs)
+    
 
 # =====================================================================

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 =======================================================
 ===                   KINTUN-WENU                   ===
@@ -224,7 +223,7 @@ def get_areas(polygons, geod=None, workers=None):
     if workers is None:
         areas = polygons.map(partial(get_area, geod=geod))
     else:
-        chunksize = 1 + len(polygons)//workers
+        chunksize = 1 + len(polygons) // workers
         with Pool(processes=workers) as pool:
             areas = pool.map(partial(get_area, geod=geod), polygons, chunksize=chunksize)
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 =======================================================
 ===                   KINTUN-WENU                   ===
@@ -28,6 +27,7 @@ from contextlib import nullcontext
 from netCDF4 import Dataset
 
 from .units import standardise_unit_string, convert_units
+
 
 # =================================================================================
 
@@ -118,7 +118,7 @@ class Kalkutun:
         dataset : netCDF4.Dataset or str
             The netCDF4 dataset containing the product.
         grid_format : str, optional
-            Format of the grid (default: None).
+            Format of the grid (default: 'corners').
         kw_grid : dict, optional
             Dictionary containing grid information (default: None).
         kw_vars : dict, optional
@@ -127,9 +127,9 @@ class Kalkutun:
             Dictionary containing attribute information (default: None).
         """
         # Initialize parameters
+        kw_vars = kw_vars or {}
         kw_grid = kw_grid or {}
         kw_attrs = kw_attrs or {}
-        kw_vars = kw_vars or {}
 
         # Initialize class attributes
         self._dimensions = {}
@@ -140,7 +140,7 @@ class Kalkutun:
         self._from_formula = []
 
         # *** Initialize dataset ***
-        # Do not close the dataset after reading, assuming that it could be used inside
+        # Do not close the dataset after reading if it is already open, assuming that it could be used inside
         # another 'with' statement outside this class.
         to_context = False
         if not isinstance(dataset, Dataset):
@@ -150,7 +150,7 @@ class Kalkutun:
         # Open file and retrieve information
         with dataset if to_context else nullcontext(dataset) as ds:
             self._process_variables(ds, kw_vars)
-            self._process_grid(ds, grid_format, kw_grid)
+            self._process_grid(ds, grid_format, **kw_grid)
             # ToDo: add formula processing
 
         # ToDo: remove extra logging
@@ -209,10 +209,10 @@ class Kalkutun:
 
             # store values and dimensions
             self._variables[name] = {
-                'values' : retr_var[:],
-                'dims'   : var_dims[:],
-                'shape'  : retr_var[:].shape,
-                'attrs'  : {},
+                'values': retr_var[:],
+                'dims': var_dims[:],
+                'shape': retr_var[:].shape,
+                'attrs': {},
             }
 
             # get attributes
@@ -237,7 +237,7 @@ class Kalkutun:
 
     # -----------------------------------------------------------------------------
 
-    def _process_grid(self, dataset, grid_format, kw_grid):
+    def _process_grid(self, dataset, grid_format, **kw_grid):
         """
         Process grid information specified in kw_grid dictionary.
 
@@ -250,25 +250,32 @@ class Kalkutun:
         kw_grid : dict
             Dictionary containing grid information.
         """
-        # get grid definition
+
+        # Defaulting to 'corners' if no format is provided
+        if grid_format is None:
+            grid_format = 'corners'
+
+        # Read coordinates variables
         if grid_format == 'corners':
 
             dim = kw_grid['dimension']
-            lat_var = dataset[kw_grid['latitude']['path']]
-            lon_var = dataset[kw_grid['longitude']['path']]
+            lat_var = dataset[kw_grid['latitude']]
+            lon_var = dataset[kw_grid['longitude']]
 
             if lat_var.dimensions != lon_var.dimensions:
                 raise ValueError(f"Variables of longitudes and latitudes have different dimensions: "
                                  f"{lon_var.dimensions} != {lat_var.dimensions}")
 
+            grid_dims = kw_grid.pop('grid_dims', tuple(x for x in lat_var.dimensions if x != dim))
+
             self._grid_vars = {
                 'corner_dim': dim,
-                'grid_dim'  : tuple(x for x in lat_var.dimensions if x != dim),
-                'latitude'  : {'dims': lat_var.dimensions, 'values': lat_var[:]},
-                'longitude' : {'dims': lon_var.dimensions, 'values': lon_var[:]},
+                'grid_dims': grid_dims,
+                'latitude': {'dims': lat_var.dimensions, 'values': lat_var[:]},
+                'longitude': {'dims': lon_var.dimensions, 'values': lon_var[:]},
             }
 
-        elif grid_format is not None:
+        else:
             logging.error(f"method {grid_format} not implemented.")
             logging.error(f"current methods available:")
             logging.error(f"  corners")
@@ -320,7 +327,7 @@ class Kalkutun:
     @property
     def grid_dimensions(self) -> tuple:
         """Returns the dimensions of the horizontal grid."""
-        return self._grid_vars['grid_dim']
+        return self._grid_vars['grid_dims']
 
     # -----------------------------------------------------------------------------
 
@@ -383,10 +390,6 @@ class Kalkutun:
         -------
         None
         """
-        # ToDo: implementation for tuple of varnames
-        #   this could be a problem when transforming some variables before
-        #   an error rises
-
         to_unit = standardise_unit_string(to_unit)
 
         self.variables[varname]['values'] = convert_units(
@@ -478,7 +481,7 @@ class Kalkutun:
         if mask.ndim != self.variables[var]['values'].ndim:
             if self.variables[var]['values'].shape[:mask.ndim] == mask.shape:
                 extra_dims = self.variables[var]['values'].ndim - mask.ndim
-                mask = np.expand_dims(mask, axis=tuple(range(mask.ndim, mask.ndim+extra_dims)))
+                mask = np.expand_dims(mask, axis=tuple(range(mask.ndim, mask.ndim + extra_dims)))
                 mask = np.broadcast_to(mask, self.variables[var]['values'].shape)
 
         if inplace:
