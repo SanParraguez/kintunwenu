@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 =======================================================
 ===                   KINTUN-WENU                   ===
@@ -23,10 +22,7 @@ __all__ = [
 # ============= IMPORTS ===============================
 
 import logging
-import sys
-
 import numpy as np
-
 from netCDF4 import Dataset
 
 from .grid import create_grid, weighted_regrid
@@ -146,7 +142,7 @@ class GridCrafter:
 
     def regrid(self, product, varnames=None,
                qa_filter=None, coord_filter=None,
-               **kwargs):
+               kw_product=None, **kwargs):
         """
         Perform a regridding over a product
 
@@ -161,23 +157,29 @@ class GridCrafter:
             Quality assurance filter to be applied.
         coord_filter : tuple
             Constrain the domain by masking values outside the limits given.
+            Should follow the format `(min_lon, max_lon, min_lat, max_lat)`.
+        kw_product : dict
+            keyword arguments for Kalkutun
         **kwargs : dict, optional
-            Additional keyword arguments. Used for initialization of Kalkutun product.
+            Additional keyword arguments. Used for calling gridding function.
 
         Returns
         -------
         np.ndarray
             2D-array with the weighted values.
         """
-        kprod = product.copy() if isinstance(product, Kalkutun) else Kalkutun(product, **kwargs)
+        if kw_product is None:
+            kw_product = {}
+        kprod = product.copy() if isinstance(product, Kalkutun) else Kalkutun(product, **kw_product)
+        dims = set(kprod.grid_dimensions)
 
         if varnames is None:
-            dims = kprod.grid_dimensions
-            varnames = tuple(k for k, v in kprod.variables.items() if v['dims'][:len(dims)] == dims)
+            varnames = tuple(k for k, v in kprod.variables.items() if dims.issubset(v['dims']))
         elif isinstance(varnames, str):
             varnames = tuple([varnames])
 
-        # ToDo: should split_polygons be applied mandatory?
+        # ToDo: merge coord_filter and limits to perform always a more
+        #   constrained filter allowing None values.
         if coord_filter is not None:
             kprod.coordinates_filter(varnames, coord_filter, inplace=True)
         else:
@@ -197,20 +199,20 @@ class GridCrafter:
         elif self.qa_filter is not None:
             kprod.qa_filter(varnames, self.qa_filter, inplace=True)
 
-        data = {k: v['values'] for k, v in kprod.variables.items() if k in varnames}
+        data = {k: v for k, v in kprod.variables.items() if k in varnames}
         logging.info(f"variables to regrid: {list(data.keys())}")
 
-        if not [v for k, v in data.items() if v.size > 0]:
+        if not [v for k, v in data.items() if v['values'].size > 0]:
             logging.warning(f"    No polygons left to regrid for {product}, returning None (might check masked data)")
             return None
 
         if self.interpolation == 'weighted':
             regrid = weighted_regrid(
-                self.lons, self.lats, kprod.polygons, data,
+                self.lons, self.lats, kprod.grid_dimensions, kprod.polygons.squeeze(), data,
                 min_fill=self.min_fill, geod=self.geod, **kwargs
             )
             if not regrid:
-                logging.warning(f"    No cell filled for {product}, returning None (might check masked data)")
+                logging.warning(f"    No cell filled, returning None (might check masked data)")
                 return None
         else:
             raise NotImplementedError('Interpolation type not implemented')
