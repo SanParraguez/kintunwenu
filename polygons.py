@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 =======================================================
 ===                   KINTUN-WENU                   ===
@@ -13,15 +12,16 @@ __all__ = [
     'get_coordinates_from_polygons',
     'get_corners_from_grid',
     'split_anomaly_polygons',
-    'shift_polygons',
 ]
 
 # === IMPORTS =========================================================
+
 import numpy as np
 import pandas as pd
 import shapely
 from shapely.ops import split
 from .geodata import create_geo_dataset
+
 
 # =================================================================================
 
@@ -42,6 +42,7 @@ def create_meridian(longitude):
     """
     return shapely.LineString([(longitude, -90), (longitude, 90)])
 
+
 # =================================================================================
 
 def intersects_meridian(polygons, meridian):
@@ -61,6 +62,7 @@ def intersects_meridian(polygons, meridian):
         False otherwise.
     """
     return shapely.intersects(polygons, create_meridian(meridian))
+
 
 # =================================================================================
 
@@ -84,6 +86,7 @@ def get_coordinates_from_polygons(polygons):
 
     coords, indices = shapely.get_coordinates(polygons, return_index=True)
     return np.split(coords, np.where(indices[1:] != indices[:-1])[0] + 1)
+
 
 # =================================================================================
 
@@ -132,9 +135,10 @@ def get_corners_from_grid(longitude, latitude, mode='center'):
     corners = np.stack((nw_corner, ne_corner, se_corner, sw_corner))
     corners = np.moveaxis(corners.reshape((4, 2, -1)), -1, 0)
 
-    corners[corners > 180] -= 360       # Get coordinates back to where they should be
+    corners[corners > 180] -= 360  # Get coordinates back to where they should be
 
     return corners
+
 
 # =================================================================================
 
@@ -266,6 +270,7 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
         return create_geo_dataset(polygons, **data)
     else:
         return polygons, data if data is not None else polygons
+
 
 # =================================================================================
 
