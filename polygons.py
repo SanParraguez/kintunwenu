@@ -288,9 +288,9 @@ def shift_polygons(polygons, longitude):
 
     try:
         coords = np.array(coords, dtype=np.float64)
-        coords[:, :, 0] += longitude
+        coords[..., 0] += longitude
     except ValueError:
         for coord in coords:
-            coord[:, 0] += longitude
+            coord[..., 0] += longitude
 
     return shapely.polygons(coords)
