@@ -295,14 +295,13 @@ def are_over_pole(polygons, geod=None, workers=None):
         geod = pyproj.CRS.from_epsg(4326).get_geod()
 
     if workers is None:
-        over_pole = polygons.map(partial(is_over_pole, geod=geod))
-    else:
-        chunksize = 1 + len(polygons) // workers
-        with Pool(processes=workers) as pool:
-            over_pole = pool.map(partial(is_over_pole, geod=geod), polygons, chunksize=chunksize)
-        over_pole = np.asarray(over_pole)
+        return polygons.map(partial(is_over_pole, geod=geod))
 
-    return over_pole
+    chunksize = 1 + len(polygons) // workers
+    with Pool(processes=workers) as pool:
+        over_pole = pool.map(partial(is_over_pole, geod=geod), polygons, chunksize=chunksize)
+    return np.asarray(over_pole)
+
 
 # =================================================================================
 
