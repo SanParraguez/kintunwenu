@@ -69,6 +69,7 @@ def intersects_meridian(polygons, meridian):
 def get_coordinates_from_polygons(polygons):
     """
     Returns a list of arrays with (n, 2) coordinates from a list of polygons.
+    This function returns coordinates in the (x, y) convention of Shapely.
 
     Parameters
     ----------
@@ -85,6 +86,7 @@ def get_coordinates_from_polygons(polygons):
         polygons = np.array([polygons])
 
     coords, indices = shapely.get_coordinates(polygons, return_index=True)
+
     return np.split(coords, np.where(indices[1:] != indices[:-1])[0] + 1)
 
 
@@ -147,7 +149,7 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
 
     Parameters
     ----------
-    polygons : np.ndarray or pd.Series
+    polygons : np.ndarray or pd.Series or pd.DataFrame
         Array of shapely.geometry.Polygon objects to split.
     data : np.ndarray or pd.Series or list or dict, optional
         Data to carry with the polygons. Default is None.
@@ -168,14 +170,15 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
     elif isinstance(polygons, pd.DataFrame) and data is None:
         data = polygons.copy()
         polygons = data.pop('geometry')
+
     if data is None:
         data = {}
 
     # get coordinates of points of the polygons (n, k, 2)
-    #   n: number of polygons, k: number of points
+    #   n: number of polygons, k: number of corners
     coords = get_coordinates_from_polygons(polygons)
 
-    # Try to create array, not possible if geometries have different number of points
+    # Try to create array, not possible if geometries have different amount of corners
     try:
         coords = np.array(coords, dtype=np.float64)
     except ValueError:
@@ -229,9 +232,7 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
             new_polygons = np.array([shapely.polygons(new_coord) for new_coord in new_coords])
 
     else:
-        raise NotImplementedError('Support for lists will be implemented')
-
-    # -------------------------------
+        raise NotImplementedError("List-like coords not supported yet")
 
     # Split provided data if available
 
@@ -262,7 +263,7 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
             new_value = np.ma.concatenate([np.tile(d, (n, 1)) for d, n in zip(new_value, repeat_index)]).squeeze()
             data[key] = np.concatenate([np.stack(value), new_value])
     else:
-        raise TypeError(f'Data type {type(data)} not supported')
+        raise TypeError(f"Unsupported data type: {type(data)}")
 
     polygons = np.concatenate([polygons, new_polygons])
 
@@ -274,15 +275,15 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
 
 # =================================================================================
 
-def shift_polygons(polygons, longitude):
+def shift_polygons(polygons, shift_deg):
     """
-    Shifts the longitude of a list of polygons by a specified amount.
+    Shifts the longitude of a list of polygons by a specified amount. Follows (x, y) convention.
 
     Parameters
     ----------
     polygons : list or np.ndarray
         An iterable of `shapely.geometry.Polygon` objects to be shifted.
-    longitude : float
+    shift_deg : float
         The amount by which the longitude of the polygons should be shifted.
         Positive values shift to the east, negative values shift to the west.
 
@@ -292,12 +293,10 @@ def shift_polygons(polygons, longitude):
         An array of `shapely.geometry.Polygon` objects with the longitude shifted.
     """
     coords = get_coordinates_from_polygons(polygons)
-
     try:
         coords = np.array(coords, dtype=np.float64)
-        coords[..., 0] += longitude
+        coords[..., 0] += shift_deg
     except ValueError:
         for coord in coords:
-            coord[..., 0] += longitude
-
+            coord[..., 0] += shift_deg
     return shapely.polygons(coords)
