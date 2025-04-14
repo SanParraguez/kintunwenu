@@ -164,13 +164,13 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
     elif isinstance(polygons, pd.DataFrame) and data is None:
         data = polygons.copy()
         polygons = data.pop('geometry')
-
     if data is None:
         data = {}
 
-    antimeridian = create_meridian(180.)
-
+    # get coordinates of points of the polygons (n, k, 2)
+    #   n: number of polygons, k: number of points
     coords = get_coordinates_from_polygons(polygons)
+
     # Try to create array, not possible if geometries have different number of points
     try:
         coords = np.array(coords, dtype=np.float64)
@@ -204,6 +204,8 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
         polygons, new_polygons = shapely.polygons(coords), shapely.polygons(new_coords)
 
         # Split polygons and get the repeat index for further data return
+        # ToDo: check if can be done in an array operation
+        antimeridian = create_meridian(180.)
         new_polygons = [split(poly, antimeridian) for poly in new_polygons]
         repeat_index = [len(poly.geoms) for poly in new_polygons] if data is not None else None
 
