@@ -146,34 +146,27 @@ def get_intersections(a, b, threads=None):
     np.ndarray or pd.Series
         The intersections between the two arrays or LineStrings.
     """
-    # Convert to arrays
-    a = np.array([a]) if isinstance(a, shapely.Geometry) else a
-    b = np.array([b]) if isinstance(b, shapely.Geometry) else b
     a = np.array(a) if isinstance(a, (list, tuple)) else a
     b = np.array(b) if isinstance(b, (list, tuple)) else b
 
-    # Raise warning if different types of objects are passed
     if type(a) != type(b):
-        raise TypeError(f'Unexpected behavior could arise when indexing different type of objects '
-                        f'[{type(a)}, {type(b)}]')
+        raise TypeError(f"Geometry types don't match: {type(a)} vs {type(b)}")
 
-    if threads is None:
-        intersections = shapely.intersection(a, b)
+    if threads is None or isinstance(a, shapely.Geometry):
+        return shapely.intersection(a, b)
 
+    chunksize = 1 + len(a) // threads
+    if isinstance(a, pd.Series):
+        chunks = [(a.iloc[i * chunksize:(i + 1) * chunksize], b.iloc[i * chunksize:(i + 1) * chunksize])
+                  for i in range(threads)]
     else:
-        chunksize = 1 + len(a) // threads
-        if isinstance(a, pd.Series) and isinstance(b, pd.Series):
-            chunks = [(a.iloc[i * chunksize:(i + 1) * chunksize], b.iloc[i * chunksize:(i + 1) * chunksize]) for i in
-                      range(threads)]
-        else:
-            chunks = [(a[i * chunksize:(i + 1) * chunksize], b[i * chunksize:(i + 1) * chunksize]) for i in
-                      range(threads)]
+        chunks = [(a[i * chunksize:(i + 1) * chunksize], b[i * chunksize:(i + 1) * chunksize])
+                  for i in range(threads)]
 
-        with ThreadPool(processes=threads) as pool:
-            intersections = pool.starmap(shapely.intersection, chunks)
+    with ThreadPool(processes=threads) as pool:
+        intersections = pool.starmap(shapely.intersection, chunks)
 
-        intersections = pd.concat(intersections) if isinstance(a, pd.Series) else np.concatenate(intersections)
-
+    intersections = pd.concat(intersections) if isinstance(a, pd.Series) else np.concatenate(intersections)
     return intersections
 
 # =================================================================================
