@@ -13,6 +13,7 @@ __all__ = [
 ]
 
 # === IMPORTS =========================================================
+
 import logging
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ import shapely
 from datetime import datetime
 from .geodata import get_intersections, get_areas
 from .polygons import get_corners_from_grid
+
 
 # =================================================================================
 
@@ -63,6 +65,11 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     elif isinstance(data, pd.DataFrame):
         data = data.to_dict(orient='series')
 
+    for k, v in data.items():
+        if v.shape[:polygons.ndim] != polygons.shape:
+            raise ValueError(f"Provided polygons should match first dimensions of data to be regridded. "
+                             f"Found {polygons.shape} and {v.shape} for {k}")
+
     if min_fill is not None:
         assert 0.0 < min_fill < 1.0, f"Minimum fill value has to be a fraction, {min_fill} not valid."
 
@@ -80,6 +87,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
 
     # ToDo: Implement KDtree and Rtree, check speeds.
     # Create and query STRtree
+    polygons = polygons.flatten()
     tree = shapely.STRtree(df_grid['polygon'].to_numpy())
     inters = tree.query(polygons)
 
@@ -107,7 +115,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
             if np.issubdtype(value.dtype, np.datetime64):
                 value = (value - datetime(1970, 1, 1)).dt.total_seconds()
                 to_datetime.append(key)
-            df_inter['var_'+key] = np.asarray(value)[inters[0]]
+            df_inter['var_'+key] = np.asarray(value).flatten()[inters[0]]
     else:
         df_inter['data'] = data[inters[0]]
 
@@ -210,8 +218,8 @@ def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corne
 
     return grid_lon, grid_lat
 
-# =================================================================================
 
+# =================================================================================
 def create_geo_grid(lons, lats, mode='corners'):
     """
     Generates a Geo-DataFrame containing a grid of polygons defined by the input latitude and longitude coordinates.
