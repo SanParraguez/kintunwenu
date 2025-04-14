@@ -126,6 +126,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     # Add up all the contributions per cell (now 'coverage' will be the total fraction of the cell covered)
     #    groupby seems to work from pandas v2.0
     df_inter.reset_index(inplace=True)
+    df_inter['count'] = 1
     df_inter = df_inter.drop(['area', 'polygon', 'inter_area'], axis=1).groupby('index').sum()
 
     # Filter if min_fill is higher than the total area covered
@@ -138,12 +139,13 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
         return None
 
     # Divide by the area covered, since it could be a value different from 1 for not completely covered cells
-    for col in [col for col in df_inter.drop('coverage', axis=1)]:
+    for col in [col for col in df_inter.drop(['coverage', 'count'], axis=1)]:
         df_grid[col] = df_inter[col] / df_inter['coverage']
 
     # Include covered fraction into data for output
-    df_inter.rename(columns={'coverage': 'var_coverage'}, inplace=True)
+    df_inter.rename(columns={'coverage': 'var_coverage', 'count': 'var_count'}, inplace=True)
     df_grid['var_coverage'] = df_inter['var_coverage']
+    df_grid['var_count'] = df_inter['var_count']
 
     grid_values = {}
     for col in df_inter:
