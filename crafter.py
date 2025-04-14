@@ -177,6 +177,7 @@ class GridCrafter:
         elif isinstance(varnames, str):
             varnames = tuple([varnames])
 
+        # ToDo: should split_polygons be applied mandatory?
         if coord_filter is not None:
             kprod.coordinates_filter(varnames, coord_filter, inplace=True)
         else:
