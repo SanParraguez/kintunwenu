@@ -192,7 +192,7 @@ class Kalkutun:
                 continue
 
             # get variable from file
-            retr_var = get_netcdf_var(dataset, var['path'])
+            retr_var = dataset[var['path']]
 
             # get dimensions
             var_dims = retr_var.dimensions
@@ -244,8 +244,8 @@ class Kalkutun:
         if grid_format == 'corners':
 
             dim = kw_grid['dimension']
-            lat_var = get_netcdf_var(dataset, kw_grid['latitude']['path'])
-            lon_var = get_netcdf_var(dataset, kw_grid['longitude']['path'])
+            lat_var = dataset[kw_grid['latitude']['path']]
+            lon_var = dataset[kw_grid['longitude']['path']]
 
             if lat_var.dimensions != lon_var.dimensions:
                 raise ValueError(f"Variables of longitudes and latitudes have different dimensions: "
