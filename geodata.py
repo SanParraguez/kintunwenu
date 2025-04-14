@@ -33,6 +33,7 @@ from .geom_utils import get_corners_from_grid
 
 
 # =================================================================================
+
 def create_geo_dataset(geometries, **kwargs):
     """
     Creates a pandas DataFrame that combines Shapely Polygon objects and data values.
@@ -91,6 +92,7 @@ def filter_over_pole(df, geod=None, workers=None):
 
     return df[~over_pole]
 
+
 # =================================================================================
 
 def filter_by_latitude(df, lat_thresh):
@@ -116,16 +118,12 @@ def filter_by_latitude(df, lat_thresh):
 
     """
     # ToDo: implementation for pd.Series.
-
-    # Create latitude bands using shapely Polygon objects
-    north_pole_band = Polygon([(-180, lat_thresh), (-180, 90), (180, 90), (180, lat_thresh)])
-    south_pole_band = Polygon([(-180, -lat_thresh), (-180, -90), (180, -90), (180, -lat_thresh)])
-
-    # Filter polygons that intersect with the latitude bands
-    df = df[~shapely.intersects(df['geometry'], north_pole_band)]
-    df = df[~shapely.intersects(df['geometry'], south_pole_band)]
-
+    north_band = Polygon([(-180, lat_thresh), (-180, 90), (180, 90), (180, lat_thresh)])
+    south_band = Polygon([(-180, -lat_thresh), (-180, -90), (180, -90), (180, -lat_thresh)])
+    df = df[~shapely.intersects(df['geometry'], north_band)]
+    df = df[~shapely.intersects(df['geometry'], south_band)]
     return df
+
 
 # =================================================================================
 
@@ -233,6 +231,7 @@ def get_areas(polygons, geod=None, workers=None):
 
     return pd.Series(areas, index=polygons.index)
 
+
 # =================================================================================
 
 def is_over_pole(polygon, geod):
@@ -271,6 +270,7 @@ def is_over_pole(polygon, geod):
 
     # If the sum of the azimuth differences is zero, the polygon crosses over the pole
     return np.isclose(diff.sum(), 0.0)
+
 
 # =================================================================================
 
@@ -312,3 +312,129 @@ def are_over_pole(polygons, geod=None, workers=None):
     return over_pole
 
 # =================================================================================
+
+def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corners'):
+    """
+    Creates equally spaced grid cells.
+
+    Parameters
+    ----------
+    grid_size : float or tuple[float, float]
+        Size of the grid cells. If a float, a regular grid is assumed.
+    lon_lim : tuple[float, float]
+        Longitude limits of the grid.
+    lat_lim : tuple[float, float]
+        Latitude limits of the grid.
+    method : str, optional
+        Indicates if the points represent cell 'corners' (default) or centers.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        A tuple with (lons, lats) as 1D arrays.
+    """
+    if isinstance(grid_size, (float, int)):
+        grid_size = (grid_size, grid_size)
+    else:
+        grid_size = tuple(grid_size)
+
+    if len(lat_lim) != 2 or len(lon_lim) != 2:
+        raise AssertionError("lat_lim and lon_lim must be 2-tuples.")
+
+    if method == 'corners':
+        # Compute the number of grid cells in each direction
+        nlon = int((lon_lim[1] - lon_lim[0]) / grid_size[0])
+        nlat = int((lat_lim[1] - lat_lim[0]) / grid_size[1])
+        # Adjust limits to match the exact cell size
+        adj_lon_lim = (lon_lim[0], lon_lim[0] + nlon * grid_size[0])
+        adj_lat_lim = (lat_lim[0], lat_lim[0] + nlat * grid_size[1])
+
+        grid_lon = np.linspace(*adj_lon_lim, num=nlon + 1, endpoint=True)
+        grid_lat = np.linspace(*adj_lat_lim, num=nlat + 1, endpoint=True)
+    else:
+        raise NotImplementedError(f"Method '{method}' is not supported.")
+
+    return grid_lon, grid_lat
+
+
+# =================================================================================
+
+def create_geo_grid(grid_lat, grid_lon, mode='corners', crs='WGS84'):
+    """
+    Generates a GeoDataFrame with grid cell polygons defined by latitude and longitude coordinates.
+
+    Parameters
+    ----------
+    grid_lat : array-like
+        Latitudes (in degrees).
+    grid_lon : array-like
+        Longitudes (in degrees).
+    mode : str, optional
+        'corners' (default) defines cells by corner coordinates.
+    crs : str, optional
+        The coordinate reference system (default: 'WGS84')
+
+    Returns
+    -------
+    gpd.GeoDataFrame
+        A GeoDataFrame with columns 'xi', 'yi', and 'geometry' for each grid cell.
+    """
+    grid_lat = np.asarray(grid_lat)
+    grid_lon = np.asarray(grid_lon)
+
+    if grid_lat.ndim == 1 and grid_lon.ndim == 1:
+        lat_mesh, lon_mesh = np.meshgrid(grid_lat, grid_lon, indexing='ij')
+    elif grid_lat.shape == grid_lon.shape:
+        lat_mesh = grid_lat
+        lon_mesh = grid_lon
+    else:
+        raise ValueError(f"Latitude and longitude arrays must be same shape or 1D. Got {grid_lat.shape}, {grid_lon.shape}.")
+
+    corners = get_corners_from_grid(lat_mesh, lon_mesh, mode=mode) # (n, 2) in lon, lat
+    if corners.shape[-1] != 2:
+        raise ValueError("Expected corner coordinates in (lon, lat) order with shape (..., 2)")
+
+    # Validate coordinate order
+    if np.abs(corners[..., 1]).max() > 90 and np.abs(corners[..., 0]).max() <= 90:
+        raise ValueError("Coorners appear to be in (lat, lon) order, expected (lon, lat).")
+
+    polys_grid = shapely.polygons(corners)
+
+    shape = lat_mesh.shape
+    grid_xi = np.tile(np.arange(shape[1] - 1), shape[0] - 1)
+    grid_yi = np.arange(shape[0] - 1).repeat(shape[1] - 1)
+
+    df_grid = gpd.GeoDataFrame({
+        'xi': grid_xi,
+        'yi': grid_yi,
+        'geometry': polys_grid
+    }, crs=crs)
+
+    return df_grid
+
+# =================================================================================
+
+def is_regular_grid(grid_lat, grid_lon):
+    """
+    Checks if the provided latitude and longitude arrays define a regular grid.
+
+    Parameters
+    ----------
+    grid_lon : np.ndarray
+        Array of longitudes (1D or 2D).
+    grid_lat : np.ndarray
+        Array of latitudes (1D or 2D).
+
+    Returns
+    -------
+    bool
+        True if the grid is regular; otherwise, False.
+    """
+    if grid_lat.ndim == 2 and grid_lon.ndim == 2:
+        lat_diff = np.diff(grid_lat, axis=0)
+        lon_diff = np.diff(grid_lon, axis=1)
+        return np.allclose(lat_diff, lat_diff[:, 0]) and np.allclose(lon_diff, lon_diff[0, :])
+    elif grid_lat.ndim == 1 and grid_lon.ndim == 1:
+        return True
+
+    raise ValueError("grid_lat and grid_lon must both be 1D or both be 2D.")
