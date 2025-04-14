@@ -198,7 +198,7 @@ def get_areas(polygons, geod=None, workers=None):
 
     Parameters
     ----------
-    polygons : pd.Series of shapely.geometry.Polygon
+    polygons : pd.Series[shapely.geometry.Polygon]
         Series of input polygons.
     geod : pyproj.Geod, optional
         Geodetic calculator object, defaults to None (i.e., use the WGS84 ellipsoid).
@@ -218,7 +218,7 @@ def get_areas(polygons, geod=None, workers=None):
     if workers is None:
         areas = polygons.map(partial(get_area, geod=geod))
     else:
-        chunksize = 1 + len(polygons)//workers
+        chunksize = 1 + len(polygons) // workers
         with Pool(processes=workers) as pool:
             areas = pool.map(partial(get_area, geod=geod), polygons, chunksize=chunksize)
 
