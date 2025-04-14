@@ -112,7 +112,7 @@ def get_polygons_from_corners(lats, lons):
 
 # =================================================================================
 
-def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
+def split_anomaly_polygons(polygons, data=None, to_dataframe=False):
     """Splits polygons that cross the antimeridian (180 degrees longitude).
 
     Parameters
@@ -155,11 +155,12 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
     # Return if no coords are found, this could be hiding errors
     if not coords.any():
         if to_dataframe:
-            return create_geo_dataset(polygons)
+            if isinstance(data, (np.ndarray, list)):
+                data = {'value': data}
+            return create_geo_dataset(polygons, **data)
         else:
-            return polygons, data if data is not None else polygons
+            return (polygons, data) if data is not None else polygons
 
-    # ---------- Get new polygons ----------
     if isinstance(coords, np.ndarray):
 
         # Get weirdly long polygons, assuming there should not be huge polygons
@@ -167,11 +168,12 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
 
         if not anomaly.any():
             if to_dataframe:
+                if isinstance(data, (np.ndarray, list)):
+                    data = {'value': data}
                 return create_geo_dataset(polygons, **data)
             else:
-                return polygons, data if data is not None else polygons
+                return (polygons, data) if data is not None else polygons
 
-        # Get only coords from anomaly polygons
         coords, new_coords = coords[~anomaly], coords[anomaly]
         # Shift negative coordinates by 360
         new_coords[..., 0][new_coords[..., 0] < 0] += 360
@@ -181,23 +183,21 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
         # Split polygons and get the repeat index for further data return
         # ToDo: check if can be done in an array operation
         antimeridian = create_meridian(180.)
-        new_polygons = [split(poly, antimeridian) for poly in new_polygons]
-        repeat_index = [len(poly.geoms) for poly in new_polygons] if data is not None else None
+        new_polygons_split = [split(poly, antimeridian) for poly in new_polygons]
+        repeat_index = [len(poly.geoms) for poly in new_polygons_split]
 
         split_coords = get_coords_from_polygons(
-            np.concatenate([list(poly.geoms) for poly in new_polygons])
+            np.concatenate([list(poly.geoms) for poly in new_polygons_split])
         )
         try:
-            new_coords = np.array(new_coords, dtype=np.float64)
-            new_coords[(new_coords[:, :, 0] > 180).any(axis=1), :, 0] -= 360.
-            new_polygons = shapely.polygons(new_coords)
+            split_coords = np.array(split_coords, dtype=np.float64)
+            split_coords[(split_coords[..., 0] > 180).any(axis=1), 0] -= 360.
+            new_polygons = shapely.polygons(split_coords)
         except ValueError:
-            # new_coords = np.array(new_coords, dtype=object)
-            for new_coord in new_coords:
-                if (new_coord[:, 0] > 180).any():
-                    new_coord[:, 0] -= 360
-
-            new_polygons = np.array([shapely.polygons(new_coord) for new_coord in new_coords])
+            for sc in split_coords:
+                if (sc[:, 1] > 180).any():
+                    sc[:, 1] -= 360
+            new_polygons = np.array([shapely.polygons(c) for c in split_coords])
 
     else:
         raise NotImplementedError("List-like coords not supported yet")
@@ -236,9 +236,11 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
     polygons = np.concatenate([polygons, new_polygons])
 
     if to_dataframe:
+        if isinstance(data, (np.ndarray, list)):
+            data = {'value': data}
         return create_geo_dataset(polygons, **data)
     else:
-        return polygons, data if data is not None else polygons
+        return (polygons, data) if data is not None else polygons
 
 
 # =================================================================================
