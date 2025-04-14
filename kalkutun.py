@@ -499,7 +499,7 @@ class Kalkutun:
         elif isinstance(var_list, str):
             var_list = [var_list]
 
-        # ToDo: Check if this is still neccesary, might be better to just remove it
+        # ToDo: Check if this is still necessary, might be better to just remove it
         if self.time_utc.ndim == self.data.ndim - 1:
             time_utc = np.repeat(self.time_utc[..., None], self.data.shape[-1], axis=-1)
         else:
