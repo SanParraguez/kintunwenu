@@ -199,8 +199,6 @@ def convert_units(data, from_unit, to_unit, species=None):
     from_unit = standardise_unit_string(from_unit)
     to_unit = standardise_unit_string(to_unit)
 
-    logging.info(f"{from_unit} -> {to_unit}")
-
     if from_unit == to_unit:
         return data
 
@@ -327,8 +325,9 @@ def convert_units(data, from_unit, to_unit, species=None):
     #         raise ValueError(f"Unit {from_num} not recognized")
     # -------------------------------------------------------------------------
 
-    logging.debug(f"applying conversion factor: {conv_factor:.4g} for {from_unit} -> {to_unit}")
-    data[~data.mask] *= conv_factor
+    logging.debug(f"{from_unit} -> {to_unit}")
+    logging.debug(f"  conversion factor: {conv_factor:.4g}")
+    data *= conv_factor
     return data
 
 # =================================================================================
