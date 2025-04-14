@@ -144,7 +144,7 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
 
     # get coordinates of points of the polygons (n, k, 2)
     #   n: number of polygons, k: number of corners
-    coords = get_coordinates_from_polygons(polygons)
+    coords = get_coords_from_polygons(polygons)
 
     # Try to create array, not possible if geometries have different amount of corners
     try:
@@ -184,9 +184,9 @@ def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
         new_polygons = [split(poly, antimeridian) for poly in new_polygons]
         repeat_index = [len(poly.geoms) for poly in new_polygons] if data is not None else None
 
-        # Shift coordinates back and create new polygons
-        new_coords = get_coordinates_from_polygons(np.concatenate([list(poly.geoms) for poly in new_polygons]))
-
+        split_coords = get_coords_from_polygons(
+            np.concatenate([list(poly.geoms) for poly in new_polygons])
+        )
         try:
             new_coords = np.array(new_coords, dtype=np.float64)
             new_coords[(new_coords[:, :, 0] > 180).any(axis=1), :, 0] -= 360.
@@ -260,7 +260,7 @@ def shift_polygons(polygons, shift_deg):
     np.ndarray
         An array of `shapely.geometry.Polygon` objects with the longitude shifted.
     """
-    coords = get_coordinates_from_polygons(polygons)
+    coords = get_coords_from_polygons(polygons)
     try:
         coords = np.array(coords, dtype=np.float64)
         coords[..., 0] += shift_deg
