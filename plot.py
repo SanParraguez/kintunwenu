@@ -20,7 +20,7 @@ try:
     from matplotlib.colors import Normalize
     from matplotlib.collections import PolyCollection
 
-    from .polygons import get_coordinates_from_polygons
+    from .polygons import get_coords_from_polygons
 except ImportError:
     logging.warning('Could not import plot functionalities for kintunwenu')
 
@@ -51,7 +51,7 @@ def polycolor(polygons, values, ax=None, **kwargs):
 
     smap = ScalarMappable(norm, cmap)
     # ToDo: check if get_coordinates_from_polygons is still working
-    collection = PolyCollection(get_coordinates_from_polygons(polygons), facecolor=smap.to_rgba(values),
+    collection = PolyCollection(get_coords_from_polygons(polygons), facecolor=smap.to_rgba(values),
                                 transform=ccrs.PlateCarree())
 
     if ax is None:

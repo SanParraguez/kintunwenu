@@ -5,11 +5,14 @@
 -> POLYGON
 
 Submodule that contains the functions to handle polygons.
+Since this module relies heavily in Shapely, all functions
+should follow their (x, y) convention for coordinates order.
 """
+
 __all__ = [
     'create_meridian',
     'intersects_meridian',
-    'get_coordinates_from_polygons',
+    'get_coords_from_polygons',
     'get_corners_from_grid',
     'split_anomaly_polygons',
 ]
@@ -66,7 +69,7 @@ def intersects_meridian(polygons, meridian):
 
 # =================================================================================
 
-def get_coordinates_from_polygons(polygons):
+def get_coords_from_polygons(polygons):
     """
     Returns a list of arrays with (n, 2) coordinates from a list of polygons.
     This function returns coordinates in the (x, y) convention of Shapely.
