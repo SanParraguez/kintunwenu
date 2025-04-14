@@ -25,7 +25,8 @@ import logging
 import numpy as np
 from netCDF4 import Dataset
 
-from .grid import create_grid, weighted_regrid
+from .grid import weighted_regrid
+from .geodata import create_grid
 from .kalkutun import Kalkutun
 
 # =================================================================================

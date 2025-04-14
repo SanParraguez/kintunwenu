@@ -6,9 +6,9 @@
 
 Submodule that contains the functions for regridding.
 """
+
 __all__ = [
     'weighted_regrid',
-    'create_grid'
 ]
 
 # === IMPORTS =========================================================
@@ -16,12 +16,11 @@ __all__ = [
 import logging
 import numpy as np
 import pandas as pd
-import pyproj
-import shapely
 import geopandas as gpd
+import shapely
 from datetime import datetime
-from .geodata import get_intersections, get_areas
-from .polygons import get_corners_from_grid
+from .geom_utils import create_geo_grid
+from .geodata import is_regular_grid
 
 import time
 

@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
 """
 =======================================================
 ===                   KINTUN-WENU                   ===
 =======================================================
 -> GEODATA
 
-Submodule that contains functions to deal with pd.DataFrame and pd.Series
+Submodule that contains functions to deal with geospatial datasets and geometries.
 """
 __all__ = [
     'create_geo_dataset',
@@ -16,17 +15,22 @@ __all__ = [
     'get_areas',
     'is_over_pole',
     'are_over_pole',
+    'create_grid',
+    'create_geo_grid',
+    'is_regular_grid'
 ]
 
 # === IMPORTS =========================================================
 
-import shapely
-import pyproj
 import numpy as np
 import pandas as pd
+import shapely
+import pyproj
 from functools import partial
 from multiprocessing.pool import Pool, ThreadPool
 from shapely.geometry import Polygon
+from .geom_utils import get_corners_from_grid
+
 
 # =================================================================================
 def create_geo_dataset(geometries, **kwargs):
