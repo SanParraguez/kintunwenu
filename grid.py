@@ -102,7 +102,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     )
 
     # Calculate intersection areas (intersections are 'inverted' so we multiply by -1)
-    df_inter['inter_area'] = -1 * get_areas(df_inter['polygon'], geod=geod, workers=workers)
+    df_inter['inter_area'] = np.abs(get_areas(df_inter['polygon'], geod=geod, workers=workers))
 
     # Calculate fraction of the cell covered by the intersected polygon
     df_inter['coverage'] = df_inter['inter_area'] / df_inter['area']
