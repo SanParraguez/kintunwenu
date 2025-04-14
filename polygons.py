@@ -92,59 +92,6 @@ def get_coords_from_polygons(polygons):
 
     return np.split(coords, np.where(indices[1:] != indices[:-1])[0] + 1)
 
-
-# =================================================================================
-
-def get_corners_from_grid(longitude, latitude, mode='center'):
-    """
-    Returns an array with dimensions (k, 4, 2), where k is the number of rectangles
-    in a grid defined by the input coordinates. Each rectangle is represented by
-    its four corners in (lon, lat) coordinates.
-
-    Parameters
-    ----------
-    latitude : np.ndarray
-        2D array (n,m) with either center or corner latitudes of a grid
-    longitude : np.ndarray
-        2D array (n,m) with either center or corner longitudes of a grid
-    mode : str
-        Indicates if the points given are 'center' or 'corner' of grid cell.
-
-    Returns
-    -------
-    np.ndarray
-        3D array (k, 4, 2) with the (lon, lat) coordinates of each rectangle's corners
-    """
-    mode = mode.lower()
-    if mode in ['center', 'centers']:
-        # Calculate the corners of the grid cells
-        lon_corners = np.stack([longitude[:-1, :-1], longitude[1:, 1:], longitude[1:, :-1], longitude[:-1, 1:]], axis=0)
-        anomaly = (np.max(lon_corners, axis=0) - np.min(lon_corners, axis=0)) > 180
-        lon_corners[np.tile(anomaly, (4, 1, 1)) * (lon_corners < 0)] += 360
-        lon_corners = lon_corners.sum(axis=0) / 4
-        lat_corners = (latitude[:-1, :-1] + latitude[1:, 1:] + latitude[1:, :-1] + latitude[:-1, 1:]) / 4
-    elif mode in ['corner', 'corners']:
-        lon_corners = longitude
-        lat_corners = latitude
-    else:
-        raise ValueError(f'Mode {mode} not recognized')
-
-    # Create arrays of the corner coordinates for each rectangle
-    # by stacking the midpoints of adjacent grid cells
-    nw_corner = np.stack((lon_corners[:-1, :-1], lat_corners[:-1, :-1]))
-    ne_corner = np.stack((lon_corners[:-1, 1:], lat_corners[:-1, 1:]))
-    se_corner = np.stack((lon_corners[1:, 1:], lat_corners[1:, 1:]))
-    sw_corner = np.stack((lon_corners[1:, :-1], lat_corners[1:, :-1]))
-
-    # Combine the corner arrays into a single array
-    corners = np.stack((nw_corner, ne_corner, se_corner, sw_corner))
-    corners = np.moveaxis(corners.reshape((4, 2, -1)), -1, 0)
-
-    corners[corners > 180] -= 360  # Get coordinates back to where they should be
-
-    return corners
-
-
 # =================================================================================
 
 def split_anomaly_polygons(polygons, data=None, to_dataframe=True):
