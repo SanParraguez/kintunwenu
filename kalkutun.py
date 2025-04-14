@@ -23,7 +23,6 @@ import numpy as np
 from contextlib import nullcontext
 from netCDF4 import Dataset
 
-from .netcdf import get_netcdf_var
 from .units import standardise_unit_string, convert_units
 
 # =================================================================================
