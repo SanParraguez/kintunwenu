@@ -97,7 +97,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     df_inter['inter_area'] = -1 * get_areas(df_inter['polygon'], geod=geod, workers=workers)
 
     # Calculate fraction of the cell covered by the intersected polygon
-    df_inter['inter_area'] = df_inter['inter_area'] / df_inter['area']
+    df_inter['coverage'] = df_inter['inter_area'] / df_inter['area']
 
     # ToDo: change to avoid datetime calculations and just use timestamp in seconds since 1970
     #   this should increase performance
@@ -118,19 +118,19 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
     for col in [col for col in df_inter if col.split('_')[0] == 'var']:
         var_col = np.array(df_inter[col].to_list())
         if var_col.ndim > 1:
-            df_inter[col] = [*(var_col * np.expand_dims(df_inter['inter_area'].to_numpy(),
+            df_inter[col] = [*(var_col * np.expand_dims(df_inter['coverage'].to_numpy(),
                                                         axis=tuple(range(1, var_col.ndim))))]
         else:
-            df_inter[col] = var_col * df_inter['inter_area']
+            df_inter[col] = var_col * df_inter['coverage']
 
-    # Add up all the contributions per cell (now inter_area will be the total fraction of the cell covered)
+    # Add up all the contributions per cell (now 'coverage' will be the total fraction of the cell covered)
     #    groupby seems to work from pandas v2.0
     df_inter.reset_index(inplace=True)
-    df_inter = df_inter.drop(['area', 'polygon'], axis=1).groupby('index').sum()
+    df_inter = df_inter.drop(['area', 'polygon', 'inter_area'], axis=1).groupby('index').sum()
 
     # Filter if min_fill is higher than the total area covered
     if min_fill is not None:
-        df_inter = df_inter[df_inter['inter_area'] > min_fill]
+        df_inter = df_inter[df_inter['coverage'] > min_fill]
 
     # In case of empty DataFrame, just return None
     if len(df_inter) == 0:
@@ -138,11 +138,15 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
         return None
 
     # Divide by the area covered, since it could be a value different from 1 for not completely covered cells
-    for col in [col for col in df_inter.drop('inter_area', axis=1)]:
-        df_grid[col] = df_inter[col] / df_inter['inter_area']
+    for col in [col for col in df_inter.drop('coverage', axis=1)]:
+        df_grid[col] = df_inter[col] / df_inter['coverage']
+
+    # Include covered fraction into data for output
+    df_inter.rename(columns={'coverage': 'var_coverage'}, inplace=True)
+    df_grid['var_coverage'] = df_inter['var_coverage']
 
     grid_values = {}
-    for col in df_inter.drop('inter_area', axis=1):
+    for col in df_inter:
         # Try to get a numeric numpy array, if it fails because of combination of arrays and NaN values
         # creates empty arrays to fill the gaps
         try:
@@ -164,8 +168,8 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
 
     return grid_values
 
-# =================================================================================
 
+# =================================================================================
 def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corners'):
     """
     Creates equally spaced grid cells.
