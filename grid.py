@@ -179,6 +179,7 @@ def weighted_regrid(grid_lon, grid_lat, polygons, data, min_fill=None, geod=None
 
 
 # =================================================================================
+
 def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corners'):
     """
     Creates equally spaced grid cells.
@@ -197,7 +198,7 @@ def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corne
     Returns
     -------
     tuple[np.ndarray, np.ndarray]
-        A tuple with (lons, lats) 1D arrays.
+        A tuple with (lons, lats) 1D arrays, trimmed if needed to fit exact grid_size.
     """
     if isinstance(grid_size, (float, int)):
         grid_size = (grid_size, grid_size)
@@ -208,10 +209,17 @@ def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corne
         raise AssertionError('Both lon and lat limits have to be tuples with two elements.')
 
     if method == 'corners':
+        # Compute the exact number of grid cells in both directions
         nlon = int((lon_lim[1] - lon_lim[0]) / grid_size[0])
         nlat = int((lat_lim[1] - lat_lim[0]) / grid_size[1])
-        grid_lon = np.linspace(*lon_lim, num=nlon + 1, endpoint=True)
-        grid_lat = np.linspace(*lat_lim, num=nlat + 1, endpoint=True)
+
+        # Adjust limits to match exactly the grid cell size
+        adj_lon_lim = (lon_lim[0], lon_lim[0] + nlon * grid_size[0])
+        adj_lat_lim = (lat_lim[0], lat_lim[0] + nlat * grid_size[1])
+
+        # Generate the grid points
+        grid_lon = np.linspace(*adj_lon_lim, num=nlon + 1, endpoint=True)
+        grid_lat = np.linspace(*adj_lat_lim, num=nlat + 1, endpoint=True)
     else:
         raise NotImplementedError(f"Method '{method}' not implemented, desirable")
 
@@ -219,6 +227,7 @@ def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corne
 
 
 # =================================================================================
+
 def create_geo_grid(lons, lats, mode='corners'):
     """
     Generates a Geo-DataFrame containing a grid of polygons defined by the input latitude and longitude coordinates.
