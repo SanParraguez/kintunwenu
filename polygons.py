@@ -14,6 +14,7 @@ __all__ = [
     'intersects_meridian',
     'get_coords_from_polygons',
     'get_corners_from_grid',
+    'get_polygons_from_corners',
     'split_anomaly_polygons',
 ]
 
@@ -91,6 +92,23 @@ def get_coords_from_polygons(polygons):
     coords, indices = shapely.get_coordinates(polygons, return_index=True)
 
     return np.split(coords, np.where(indices[1:] != indices[:-1])[0] + 1)
+
+
+# =================================================================================
+
+def get_polygons_from_corners(lats, lons):
+    """
+    Returns an array of shapely.Polygon objects created from the corners provided.
+
+    Parameters
+    ----------
+    lats : array-like
+        latitude corners with shape (n, k), with n the amount of polygons and k the amount of corners.
+    lons : array-like
+        longitude corners with shape (n, k), with n the amount of polygons and k the amount of corners.
+    """
+    return shapely.polygons(np.stack((lons, lats), -1))
+
 
 # =================================================================================
 
