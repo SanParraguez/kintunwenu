@@ -290,6 +290,8 @@ def are_over_pole(polygons, geod=None, workers=None):
     np.ndarray
         Boolean array indicating which polygons cover any of the poles.
     """
+    # ToDo: change to accept any iterable and work with arrays
+
     if geod is None:
         # Default to WGS84 ellipsoid: proj = '+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
         # geod = Geod('+a=6378137 +f=0.0033528106647475126')
