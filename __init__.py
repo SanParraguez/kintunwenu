@@ -26,7 +26,7 @@ __all__ = [
 # ===== IMPORTS =======================================
 from . import geodata
 from . import grid
-from . import nc_tools
+from . import nctools
 from . import plot
 from . import polygons
 from . import scrap
