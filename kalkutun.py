@@ -16,9 +16,7 @@ Classes:
     Kalkutun: A class for handling satellite netCDF datasets.
 """
 
-__all__ = [
-    'Kalkutun'
-]
+__all__ = ['Kalkutun']
 
 # ============= IMPORTS ===============================
 
@@ -153,6 +151,7 @@ class Kalkutun:
         with dataset if to_context else nullcontext(dataset) as ds:
             self._process_variables(ds, kw_vars)
             self._process_grid(ds, grid_format, kw_grid)
+            # ToDo: add formula processing
 
     # -----------------------------------------------------------------------------
 
@@ -248,12 +247,15 @@ class Kalkutun:
             self._grid_vars = {
                 'corner_dim': dim,
                 'grid_dim'  : tuple(x for x in lat_var.dimensions if x != dim),
-                'latitude'  : {'dims': lat_var.dimensions, 'values':  lat_var[:]},
-                'longitude' : {'dims': lon_var.dimensions, 'values':  lon_var[:]},
+                'latitude'  : {'dims': lat_var.dimensions, 'values': lat_var[:]},
+                'longitude' : {'dims': lon_var.dimensions, 'values': lon_var[:]},
             }
 
         elif grid_format is not None:
-            raise NotImplementedError(f'Reading of coordinates format {grid_format} not implemented')
+            logging.error(f"method {grid_format} not implemented.")
+            logging.error(f"current methods available:")
+            logging.error(f"  corners")
+            raise NotImplementedError(f"Reading of coordinates format '{grid_format}' not implemented")
 
     # -----------------------------------------------------------------------------
 
@@ -451,7 +453,7 @@ class Kalkutun:
             If inplace is True, None is returned, otherwise a masked array is returned
         """
         if not isinstance(inplace, bool):
-            raise ValueError(f'Inplace should be a bool, {inplace} received')
+            raise ValueError(f'Inplace should be a bool, {type(inplace)} received')
 
         if isinstance(var, tuple):
             raise TypeError("Filter method does not support multiple variables. Use a single variable name.")
@@ -497,16 +499,18 @@ class Kalkutun:
             raise ValueError('Either min_value or max_value has to be provided')
 
         if from_var is not None:
-            mask = self.variables[from_var]['values']
+            values = self.variables[from_var]['values']
         else:
-            mask = self.variables[var]['values']
+            values = self.variables[var]['values']
 
         if min_value is not None and max_value is not None:
-            mask = (mask < min_value) | (mask > max_value)
+            mask = (values < min_value) | (values > max_value)
         elif min_value is not None:
-            mask = mask < min_value
+            mask = values < min_value
         elif max_value is not None:
-            mask = mask > max_value
+            mask = values > max_value
+        else:
+            mask = np.full_like(values, False)
 
         if isinstance(var, str):
             return self.filter(var, mask, inplace)
@@ -521,6 +525,7 @@ class Kalkutun:
 
         This method applies a filter to the variable array based on the specified longitude and latitude borders.
         The filtering is inclusive, meaning that values falling within the specified range are retained.
+        Be careful when applying, undesired behaviour could arise with cells crossing the -180 = 180 longitude.
 
         Parameters
         ----------
@@ -568,19 +573,29 @@ class Kalkutun:
         if lat_min >= lat_max or lat_min > 90 or lat_max < -90:
             raise AssertionError(f'Latitude {lat_min} has to be smaller than {lat_max} and both in range [-90, 90]')
 
+        # get bounds of polygons to check
         bounds = shapely.bounds(self.polygons)
 
-        logging.info(type(bounds))
-        logging.info(bounds.shape)
-        logging.info(bounds.flatten()[0])
-        logging.info([lon_min, lon_max, lat_min, lat_max])
-        mask = (bounds[..., 0] > lon_min) | (bounds[..., 1] > lat_min) | \
-               (bounds[..., 2] < lon_max) | (bounds[..., 3] < lat_max)
+        # mask by latitudes
+        mask_lat = (bounds[..., 1] > lat_max) | (bounds[..., 3] < lat_min)
+
+        # check if any longitude is weirdly huge
+        any_huge = (bounds[..., 2] - bounds[..., 0]) > 180
+
+        # mask by longitudes
+        if lon_min < lon_max:
+            mask_lon = (bounds[..., 0] > lon_max) | (bounds[..., 2] < lon_min)
+            mask_lon[any_huge] = (bounds[any_huge, 2] > lon_max) & (bounds[any_huge, 0] < lon_min)
+        else:
+            mask_lon = ~any_huge & (bounds[..., 0] > lon_max) & (bounds[..., 2] < lon_min)
+
+        # calculate full mask
+        mask = mask_lat | mask_lon
 
         if isinstance(var, str):
             return self.filter(var, mask, inplace)
-
-        return tuple(self.filter(v, mask, inplace) for v in var)
+        else:
+            return tuple(self.filter(v, mask, inplace) for v in var)
 
     # -----------------------------------------------------------------------------
 
@@ -617,19 +632,37 @@ class Kalkutun:
 
     # -----------------------------------------------------------------------------
 
-    def pole_filter(self, var, tol=1e-3, inplace=False):
+    def pole_filter(self, var, method=None, inplace=False, **kwargs):
         """
 
         Parameters
         ----------
         var
-        tol
+        method
         inplace
 
         Returns
         -------
 
         """
+        if method is None:
+            method = 'threshold'
+
+        if method == 'threshold':
+            bounds = shapely.bounds(self.polygons)
+            thresh = kwargs.pop('threshold', 89.95)
+            mask = (bounds[..., 1] < -thresh) | (bounds[..., 3] > thresh)
+
+        elif method == 'geometry':
+            raise NotImplementedError('Sorry, still not implemented')
+
+        else:
+            raise ValueError(f'Method {method} not available')
+
+        if isinstance(var, str):
+            return self.filter(var, mask, inplace)
+        else:
+            return tuple(self.filter(v, mask, inplace) for v in var)
 
     # -----------------------------------------------------------------------------
 
@@ -645,5 +678,7 @@ class Kalkutun:
         -------
 
         """
+        # ToDo: implement
+        raise NotImplementedError('To be implemented')
 
 # =================================================================================
