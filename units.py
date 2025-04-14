@@ -136,6 +136,10 @@ UNIT_TYPE = {
     'hr'   : 'time',
     'y'    : 'time',
 
+    # Coordinates
+    'degrees_east'  : 'longitudes',
+    'degrees_north' : 'latitudes'
+
 }
 
 # =================================================================================
