@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 =======================================================================
           KINTUN-WENU IUP
@@ -9,18 +8,24 @@ The PLOT submodule contains some functions to easily plot some data
 __all__ = [
     'polycolor',
 ]
+
 # === IMPORTS =========================================================
-import cartopy.crs as ccrs
-import matplotlib.pyplot as plt
+import logging
 
-from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize
-from matplotlib.collections import PolyCollection
+try:
+    import cartopy.crs as ccrs
+    import matplotlib.pyplot as plt
 
-from .polygons import get_coordinates_from_polygons
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+    from matplotlib.collections import PolyCollection
+
+    from .polygons import get_coordinates_from_polygons
+except ImportError:
+    logging.warning('Could not import plot functionalities for kintunwenu')
+
 
 # === FUNCTIONS ===================================================================
-
 def polycolor(polygons, values, ax=None, **kwargs):
     """
     Similar to Matplotlib pcolor, but receives a 1D-array of polygons and values to assign their colors.
