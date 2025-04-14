@@ -1,321 +1,347 @@
-# -*- coding: utf-8 -*-
 """
 =======================================================
 ===                   KINTUN-WENU                   ===
 =======================================================
--> KALKUTUN
 
-Provides classes to handle different type of satellite datasets.
+KALKUTUN MODULE
+---------------
+
+This module provides the Kalkutun class for handling various types of satellite datasets.
+
+The Kalkutun class offers functionality for accessing, manipulating, and analyzing satellite product data.
+It includes methods for converting units, filtering data, and retrieving polygon information.
+
+Classes:
+    Kalkutun: A class for handling satellite netCDF datasets.
 """
 
-__all__ = [
-    'Kalkutun',
-    'GridCrafter'
-]
+__all__ = ['Kalkutun']
 
 # ============= IMPORTS ===============================
+
 import logging
 import shapely
 import numpy as np
 
 from contextlib import nullcontext
 from netCDF4 import Dataset
-from pathlib import Path
-from .geodata import create_geo_dataset, are_over_pole
-from .grid import create_grid, weighted_regrid
-from .polygons import get_corners_from_grid, split_anomaly_polygons
-from .scrap import download_ncfile
+
 from .units import standardise_unit_string, convert_units
+
 
 # =================================================================================
 
 class Kalkutun:
     """
-    A class to handle satellite datasets for the TROPOMI sensor.
+    A class for handling satellite netCDF datasets.
 
-    This class supports the following products:
-    > TROPOMI
-        - S5P_OFFL_L2__NO2
-        - S5P_RPRO_L2__NO2
-        - S5P TROPOMI/WFMD
+    This class provides an interface to access and manipulate product data from satellite netCDF datasets.
+    It offers methods to convert units, retrieve polygon data, and create a DataFrame of the polygon data.
 
-    The class provides an interface to easily access and manipulate the product data. It also includes methods to
-    convert units, retrieve polygon data, and create a dataframe of the polygon data.
+    "Kalkutun" is derived from Mapuzungún, meaning "Do witchcraft".
 
-    Kalkutun: from Mapuzungún, means "Do witchcraft"
+    grid_format : str
+        String that indicates the format of data provided to create the grid.
+        It could only be 'corners' for now.
+
+    kw_vars : str
+        Dictionary with sub-dictionaries for each variable to be stored. Each entrance has to have either
+        a 'path' to the variable in the netCDF file or a 'formula' to calculate it.
+
+        Also, the following options are supported:
+            - units     : string indicating units to set the variable into.
+            - getattr   : list with attribute names to be retrieved from variable.
+            - setattr   : dictionary with extra attributes to be set.
+
+        Example
+        -------
+        {
+            'no2' : {
+                'name'      :  'nitrogendioxide_tropospheric_column',
+                'path'      :  '/PRODUCT/nitrogendioxide_tropospheric_column',
+                'units'     :  'umol/m2',
+                'getattr'   :  ['long_name', 'standard_name'],
+                'setattr'   :  {'tracer' : 'NO2'}
+            }
+        }
+
 
     Attributes
     ----------
-    longitude : numpy.ndarray
-        The longitudes of the product.
-    latitude : numpy.ndarray
-        The latitudes of the product.
-    tracer : str
-        The tracer gas of the product (e.g., "NO2").
-    product : str
-        The name of the product (e.g., "nitrogendioxide_tropospheric_column").
-    units : str
-        The unit of the product data.
-    data : numpy.ndarray
-        The product data.
+    dimensions : dict
+        A dictionary containing information about the dimensions of the dataset.
+    variables : dict
+        A dictionary containing information about the variables in the dataset.
+    polygons : np.ndarray
+        Array containing the shapely.Polygon representation of the product's cells.
+    grid_format : str
+        The format of the grid coordinates, if available.
+    grid_dimensions : tuple
+        A tuple containing the dimension names of the spatial grid.
+
 
     Methods
     -------
-    __init__(self, dataset)
-        Initializes the Kalkutun object.
+    copy(self)
+        Creates a deep copy of the current object.
 
-    copy(self, )
+    convert_units(self, varname, to_unit)
+        Converts the units of the specified variable to the given unit.
 
-    convert_units(self, to_unit)
-        Converts the units of the product data.
+    get_polygons(self)
+        Returns a list of Polygon objects created from the product's longitudes and latitudes.
+        For increased performance access directly to the 'polygons' attribute.
 
-    qa_filter(self, )
+    filter(self, var, mask, inplace=True)
+        Filters the variable array based on the provided mask.
 
-    get_polygons(self, return_data=True)
-        Returns a list of Polygon objects created from the product's longitude and latitude.
+    minmax_filter(self, var, min_value=None, max_value=None, from_var=None, inplace=False)
+        Filters the variable array based on minimum and maximum values.
 
-    get_polygon_dataframe(self)
-        Returns a Pandas dataframe containing the polygon data.
+    coordinates_filter(self, var, *args, inplace=False, **kwargs)
+        Filters the variable array based on coordinate borders.
 
-    Raises
-    ------
-    NotImplementedError
-        If the sensor is not supported.
+    qa_filter(self, var, min_value, inplace=False)
+        Filters the variable array based on a quality assurance (QA) value threshold.
+
+
     """
+
     __module__ = 'kintunwenu'
 
-    def __init__(self, dataset, tracer=None, kw_vars=None):
+    def __init__(self, dataset, grid_format=None, kw_grid=None, kw_vars=None, kw_attrs=None):
         """
         Initializes the Kalkutun object.
 
         Parameters
         ----------
-        dataset : netCDF4.Dataset or string
+        dataset : netCDF4.Dataset or str
             The netCDF4 dataset containing the product.
-        tracer : string (optional)
-            Indicates which tracer to retrieve in case the file contains more than one.
-        kw_vars : dict or list or tuple (optional)
-            If provided, it will iterate and get the specified variables from the dataset.
-
-        Raises
-        ------
-        NotImplementedError
-            If the sensor is not supported.
+        grid_format : str, optional
+            Format of the grid (default: 'corners').
+        kw_grid : dict, optional
+            Dictionary containing grid information (default: None).
+        kw_vars : dict, optional
+            Dictionary containing variable information (default: None).
+        kw_attrs : dict, optional
+            Dictionary containing attribute information (default: None).
         """
-        # New products should be added here as an 'if' condition.
-        # Ensure that every variable has dimensions (time, scanline, pixel, ...) so the gridding routines
-        #   can properly read and process the data.
-
-        to_context = True
-        if isinstance(dataset, (str, Path)):
-            try:
-                dataset = Dataset(dataset)
-            except OSError:
-                dataset = download_ncfile(dataset)
-        elif isinstance(dataset, Dataset):
-            # Do not close the dataset after reading, assuming that it could be used inside
-            # another 'with' statement outside this class.
-            to_context = False
-        else:
-            raise NotImplementedError('Kalkutun must be created from a path to file, an url or an actual Dataset')
+        # Initialize parameters
+        kw_vars = kw_vars or {}
+        kw_grid = kw_grid or {}
+        kw_attrs = kw_attrs or {}
 
         # Initialize class attributes
-        self.data = np.ma.empty(0)
-        self.units = None
-        self.product = None
-        self.tracer = None
-        self.longitude = np.empty(0)
-        self.latitude = np.empty(0)
-        self.longitude_corners = None
-        self.latitude_corners = None
-        self.qa_value = None
-        self.time_utc = None
-        self.format = None      # polygons, centers or corners
-        self.variables = {}
-        self.support = {}
+        self._dimensions = {}
+        self._variables = {}
+        self._grid_format = grid_format
+        self._grid_vars = {}
+        self._polygons = None
+        self._from_formula = []
 
-        # Initialize context to read values from dataset
+        # *** Initialize dataset ***
+        # Do not close the dataset after reading if it is already open, assuming that it could be used inside
+        # another 'with' statement outside this class.
+        to_context = False
+        if not isinstance(dataset, Dataset):
+            dataset = Dataset(dataset)
+            to_context = True
+
+        # Open file and retrieve information
         with dataset if to_context else nullcontext(dataset) as ds:
-            # -----------------------------------------------
-            #  General
-            # -----------------------------------------------
-            # Attempt to retrieve id information from product
-            try:
-                self.id = ds.id
-            except AttributeError:
-                raise NotImplementedError('Unable to retrieve id information from product.')
-
-            # Attempt to retrieve sensor information from product
-            try:
-                self.sensor = ds.sensor.lower()
-            except AttributeError:
-                raise NotImplementedError('Unable to retrieve sensor information from product.')
-
-            # -----------------------------------------------
-            #  TROPOMI NO2 L2
-            # -----------------------------------------------
-            if 'TROPOMI/S5P NO2 1-Orbit L2 Swath' in ds.title:
-
-                id_tracer = ds.id.split('__')[1].upper()
-                if tracer and id_tracer != tracer.upper():
-                    logging.info(f'Warning: retrieved {id_tracer} but {tracer.upper()} was given.')
-
-                # Retrieve attributes from variables in product
-                variables = ds.groups['PRODUCT'].variables
-                product_name = [key for key in variables.keys() if key.endswith('_column')]
-                product_name = product_name[0] if len(product_name) == 1 \
-                    else AttributeError('Found more tan one column in data')
-
-                # Collect attributes
-                attrs = {
-                    'data': variables[product_name][:],
-                    'units': standardise_unit_string(variables[product_name].units),
-                    'product': product_name,
-                    'tracer': id_tracer,
-                    'longitude': variables['longitude'][:],
-                    'latitude': variables['latitude'][:],
-                    'qa_value': variables['qa_value'][:],
-                    'time_utc': np.array(variables['time_utc'][:], dtype='datetime64[ns]'),
-                    'format': 'centers',
-                }
-
-                self.variables.update({
-                    'nitrogendioxide_tropospheric_column_precision': variables[product_name+'_precision'][:],
-                })
-                
-                # Get support variables
-                avg_kernel = variables['averaging_kernel'][:]
-                surface_pressure = ds.groups['PRODUCT'].groups['SUPPORT_DATA'].groups['INPUT_DATA'].variables['surface_pressure'][:]
-                const_a = variables['tm5_constant_a'][:]
-                const_b = variables['tm5_constant_b'][:]
-                tropo_layer_index = variables['tm5_tropopause_layer_index'][:]                    
-                air_mass_troposphere = variables['air_mass_factor_troposphere'][:]
-                air_mass_total = variables['air_mass_factor_total'][:]
-       
-                const_a = np.concatenate([const_a[:, 0], const_a[-1:, 1]])
-                const_b = np.concatenate([const_b[:, 0], const_b[-1:, 1]])
-
-                self.support.update({
-                    'surface_pressure': surface_pressure,
-                    'tm5_constant_a': const_a,
-                    'tm5_constant_b': const_b,
-                    'tm5_tropopause_layer_index': tropo_layer_index,
-                    'air_mass_troposphere': air_mass_troposphere,
-                    'air_mass_total': air_mass_total,
-                    'avg_kernel': avg_kernel,
-                })
-
-                # Calculate and include half level pressures (nlayers + 1)
-                hlevp = const_a[None, None, None, :] + const_b[None, None, None, :] * surface_pressure[..., None]
-                self.variables['hlevel_pressure'] = hlevp
-
-                # Calculate troposphere mask
-                troposphere_mask = np.ones(avg_kernel.shape)
-                for i in range(troposphere_mask.shape[-1]):
-                    troposphere_mask[..., i][i > tropo_layer_index] = 0
-
-                # Calculate tropospheric averaging kernel
-                tropo_avg_kernel = troposphere_mask * avg_kernel * air_mass_total[..., None] / air_mass_troposphere[..., None]
-                self.variables['tropo_avg_kernel'] = tropo_avg_kernel
-
-
-            # -----------------------------------------------
-            #  TROPOMI WFMD IUP CH4/C0 v1.8
-            # -----------------------------------------------
-            elif ds.title == 'TROPOMI/WFMD XCH4 and XCO':
-
-                # Check if tracer is provided
-                if tracer is None:
-                    raise AssertionError('Given dataset contains both CH4 and CO data, a tracer has to be provided.')
-                else:
-                    tracer = tracer.upper()
-
-                # Get product based on tracer
-                if tracer == 'CH4':
-                    tracer_name = 'xch4'
-                    product_name = ds.variables[tracer_name].standard_name
-                elif tracer == 'CO':
-                    tracer_name = 'xco'
-                    product_name = 'dry_atmosphere_mole_fraction_of_carbon_monoxide'
-                else:
-                    raise AttributeError(f'Tracer provided {tracer} not found in dataset')
-
-                # Collect attributes
-                attrs = {
-                    'data': ds.variables[tracer_name][:],
-                    'units': standardise_unit_string(ds.variables[tracer_name].units),
-                    'product': product_name,
-                    'tracer': tracer,
-                    'longitude': ds.variables['longitude'][:],
-                    'latitude': ds.variables['latitude'][:],
-                    'longitude_corners': ds.variables['longitude_corners'][:],
-                    'latitude_corners': ds.variables['latitude_corners'][:],
-                    'qa_value': ds.variables[f'{tracer_name}_quality_flag'][:],
-                    'time_utc': np.array(ds.variables['time'][:], dtype='datetime64[s]'),
-                    'format': 'polygons',
-                }
-
-                self.variables.update({
-                    'avg_kernel': ds.variables[f'{tracer_name}_averaging_kernel'][:],
-                })
-
-            # Product not recognized
-            else:
-                raise NotImplementedError(f"Product '{ds.title}' has not been implemented.")
-            # -----------------------------------------------
-
-        # Set attributes
-        for key, value in attrs.items():
-            setattr(self, key, value)
+            self._process_variables(ds, kw_vars)
+            self._process_grid(ds, grid_format, **kw_grid)
+            # ToDo: add formula processing
 
     # -----------------------------------------------------------------------------
-    def max(self, *args, **kwargs):
+
+    def _process_variables(self, dataset, kw_vars):
+        """
+        Process variables specified in kw_vars dictionary.
+
+        Parameters
+        ----------
+        dataset : netCDF4.Dataset
+            The netCDF4 dataset containing the product.
+        kw_vars : dict
+            Dictionary containing variable information.
+        """
+        # store which variables will be calculated by formula
+        to_formula = self._from_formula or []
+
+        # iterate over variables
+        for k, var in kw_vars.items():
+
+            name = var.get('name', k)
+            formula = var.get('formula', None)
+            path = var.get('path', None)
+
+            # raise if both formula and path are provided
+            if path is not None and formula is not None:
+                raise ValueError(f'Either path or formula for variable has to be provided, both found for {k}')
+            # skip if formula is provided
+            if formula is not None:
+                to_formula.append(k)
+                continue
+
+            # get variable from file
+            retr_var = dataset[var['path']]
+
+            # get dimensions
+            var_dims = retr_var.dimensions
+
+            # store values and dimensions
+            self._variables[name] = {
+                'values': retr_var[:],
+                'dims': var_dims[:],
+                'shape': retr_var[:].shape,
+                'attrs': {},
+            }
+
+            # get attributes
+            to_get = var.get('getattr', [])
+            for j in to_get:
+                self._variables[var['name']]['attrs'][j] = getattr(retr_var, j)
+
+            # set attributes
+            to_set = var.get('setattr', [])
+            for j in to_set:
+                self._variables[name]['attrs'][j] = to_set[j]
+
+            # get units if available
+            self._variables[name]['units'] = getattr(retr_var, 'units', None)
+
+            # convert units
+            to_unit = var.get('units', None)
+            if to_unit is not None:
+                self.convert_units(name, to_unit)
+
+        self._from_formula += to_formula
+
+    # -----------------------------------------------------------------------------
+
+    def _process_grid(self, dataset, grid_format, **kw_grid):
+        """
+        Process grid information specified in kw_grid dictionary.
+
+        Parameters
+        ----------
+        dataset : netCDF4.Dataset
+            The netCDF4 dataset containing the product.
+        grid_format : str
+            Format of the grid.
+        kw_grid : dict
+            Dictionary containing grid information.
+        """
+
+        # Defaulting to 'corners' if no format is provided
+        if grid_format is None:
+            grid_format = 'corners'
+
+        # Read coordinates variables
+        if grid_format == 'corners':
+
+            dim = kw_grid['dimension']
+            lat_var = dataset[kw_grid['latitude']]
+            lon_var = dataset[kw_grid['longitude']]
+
+            if lat_var.dimensions != lon_var.dimensions:
+                raise ValueError(f"Variables of longitudes and latitudes have different dimensions: "
+                                 f"{lon_var.dimensions} != {lat_var.dimensions}")
+
+            grid_dims = kw_grid.pop('grid_dims', tuple(x for x in lat_var.dimensions if x != dim))
+
+            self._grid_vars = {
+                'corner_dim': dim,
+                'grid_dims': grid_dims,
+                'latitude': {'dims': lat_var.dimensions, 'values': lat_var[:]},
+                'longitude': {'dims': lon_var.dimensions, 'values': lon_var[:]},
+            }
+
+        else:
+            logging.error(f"method {grid_format} not implemented.")
+            logging.error(f"current methods available:")
+            logging.error(f"  corners")
+            raise NotImplementedError(f"Reading of coordinates format '{grid_format}' not implemented")
+
+    # -----------------------------------------------------------------------------
+
+    def max(self, var: str, *args, **kwargs):
         """This property returns the maximum value of the data array."""
-        return self.data.max(*args, **kwargs)
+        return self.variables[var]['values'].max(*args, **kwargs)
 
-    def min(self, *args, **kwargs):
+    def min(self, var: str, *args, **kwargs):
         """This property returns the minimum value of the data array."""
-        return self.data.min(*args, **kwargs)
+        return self.variables[var]['values'].min(*args, **kwargs)
 
-    def mean(self, *args, **kwargs):
+    def mean(self, var: str, *args, **kwargs):
         """This property returns the mean value of the data array."""
-        return self.data.mean(*args, **kwargs)
+        return self.variables[var]['values'].mean(*args, **kwargs)
 
-    def count(self, *args, **kwargs):
+    def count(self, var: str, *args, **kwargs):
         """This property returns the count value of the data array."""
-        return self.data.count(*args, **kwargs)
+        return self.variables[var]['values'].count(*args, **kwargs)
 
-    @property
-    def size(self):
+    def size(self, var: str) -> int:
         """This property returns the size of the data array."""
-        return self.data.size
+        return self.variables[var]['values'].size
 
-    @property
-    def shape(self):
+    def shape(self, var: str) -> tuple:
         """This property returns the shape of the data array."""
-        return self.data.shape
+        return self.variables[var]['values'].shape
 
     # -----------------------------------------------------------------------------
+
+    @property
+    def dimensions(self) -> dict:
+        """Returns the product dimensions stored as a dictionary."""
+        return self._dimensions
+
+    @property
+    def variables(self) -> dict:
+        """Returns the product variables stored as a dictionary."""
+        return self._variables
+
+    @property
+    def grid_format(self) -> str:
+        """Returns the format in which the grid cells were defined."""
+        return self._grid_format
+
+    @property
+    def grid_dimensions(self) -> tuple:
+        """Returns the dimensions of the horizontal grid."""
+        return self._grid_vars['grid_dims']
+
+    # -----------------------------------------------------------------------------
+
     def __eq__(self, other):
         """
         Compare if self is equal to another object by checking all its variables.
+
+        Parameters
+        ----------
+        other : object
+            Another object to compare with.
+
+        Returns
+        -------
+        bool
+            True if the objects are equal, False otherwise.
         """
         if isinstance(other, Kalkutun):
             for my_key, other_key in zip(self.__dict__, other.__dict__):
-                if my_key == other_key:
-                    if isinstance(getattr(self, my_key), np.ndarray):
-                        if not np.array_equal(getattr(self, my_key), getattr(other, other_key)):
-                            return False
-                    else:
-                        if getattr(self, my_key) != getattr(other, other_key):
-                            return False
-                else:
+                if my_key != other_key:
+                    return False
+                if isinstance(getattr(self, my_key), np.ndarray):
+                    if not np.array_equal(getattr(self, my_key), getattr(other, other_key)):
+                        return False
+                elif getattr(self, my_key) != getattr(other, other_key):
                     return False
             return True
-        else:
-            return False
+        return False
 
     # -----------------------------------------------------------------------------
+
     def copy(self):
         """
         Create a copy of the current object.
@@ -331,79 +357,208 @@ class Kalkutun:
         return new_object
 
     # -----------------------------------------------------------------------------
-    def convert_units(self, to_unit, var_list=None):
+
+    def convert_units(self, varname, to_unit):
         """
-        Change units of the product data.
+        Change units of the product data variable.
 
         Parameters
         ----------
+        varname : str
+            Name of variable to convert
         to_unit : str
             The desired new unit of the data.
-        var_list : list
-            Which variables to include from the product
 
         Returns
         -------
         None
         """
         to_unit = standardise_unit_string(to_unit)
-        self.data = convert_units(self.data, from_unit=self.units, to_unit=to_unit, species=self.tracer)
 
-        if not var_list: var_list = []
-        for var in var_list:
-            self.variables[var] = convert_units(self.variables[var], from_unit=self.units,
-                                                to_unit=to_unit, species=self.tracer)
+        self.variables[varname]['values'] = convert_units(
+            self.variables[varname]['values'],
+            from_unit=self.variables[varname]['units'],
+            to_unit=to_unit
+        )
 
-        self.units = to_unit
-
+        self.variables[varname]['units'] = to_unit
         return
 
     # -----------------------------------------------------------------------------
-    def qa_filter(self, min_value, inplace=False):
-        """
-        Filter the data array based on a quality assurance (QA) value threshold.
 
-        Parameters
-        ----------
-        min_value : float
-            The minimum QA value to retain data.
-        inplace : bool, optional
-            If True, the function applies the masking operation on the data array in-place.
-            If False, the function returns a new masked array (default).
+    @property
+    def polygons(self):
+        """
+        Array of polygons representing each grid cell.
 
         Returns
         -------
-            If inplace is False, A masked array with values below the minimum QA value masked.
-            None otherwise.
+        np.ndarray
+            An array of Polygon objects representing each grid cell.
         """
-        if (self.qa_value == 0.0).all():
-            logging.info('Warning: Product seems to not have any valid quality value')
-            return self.data if not inplace else None
-        if inplace:
-            self.data = np.ma.masked_where(self.qa_value < min_value, self.data)
-        else:
-            return np.ma.masked_where(self.qa_value < min_value, self.data)
+        if self._polygons is None:
+            self.update_polygons()
+        return self._polygons
+
+    @polygons.deleter
+    def polygons(self):
+        """Deletes the stored polygons."""
+        self._polygons = None
 
     # -----------------------------------------------------------------------------
-    def coordinates_filter(self, *args, inplace=False, **kwargs):
-        """
 
-        Parameters
-        ----------
-        args : iterable
-            Coordinate borders to use as filter (min lon, max lon, min lat, max lat).
-        inplace : bool
-        kwargs
+    def update_polygons(self):
+        """Creates and stores polygons from the current grid."""
+        self._polygons = self.get_polygons()
+
+    # -----------------------------------------------------------------------------
+
+    def get_polygons(self):
+        """
+        Returns an array of Polygon objects created from the product's longitude and latitude.
 
         Returns
         -------
+        np.ndarray
+            An array of Polygon objects created from the product's longitude and latitude.
+        """
+        if self._grid_format is None:
+            raise ValueError('grid_format has not been specified, cannot retrieve polygons')
+
+        if self._grid_format == 'corners':
+            lon_idx = self._grid_vars['longitude']['dims'].index(self._grid_vars['corner_dim'])
+            lat_idx = self._grid_vars['latitude']['dims'].index(self._grid_vars['corner_dim'])
+            lons = np.moveaxis(self._grid_vars['longitude']['values'], lon_idx, -1)
+            lats = np.moveaxis(self._grid_vars['latitude']['values'], lat_idx, -1)
+            return shapely.polygons(np.stack((lons, lats), -1))
+
+        else:
+            raise ValueError(f'Format for creation of polygons {self._grid_format} not recognized')
+
+    # -----------------------------------------------------------------------------
+
+    def filter(self, var, mask, inplace=False):
+        """
+        Filter function to mask values of a variable
+
+        Parameters
+        ----------
+        var : str
+            Name of the variable to filter
+        mask : array-like
+            Mask to use for filtering
+        inplace : bool, optional
+            Indicates if the operation should be performed in place (default: False)
+
+        Returns
+        -------
+        None or np.ma.MaskedArray
+            If inplace is True, None is returned, otherwise a masked array is returned
+        """
+        if not isinstance(inplace, bool):
+            raise ValueError(f'Inplace should be a bool, {type(inplace)} received')
+
+        if isinstance(var, tuple):
+            raise TypeError("Filter method does not support multiple variables. Use a single variable name.")
+
+        if mask.ndim != self.variables[var]['values'].ndim:
+            if self.variables[var]['values'].shape[:mask.ndim] == mask.shape:
+                extra_dims = self.variables[var]['values'].ndim - mask.ndim
+                mask = np.expand_dims(mask, axis=tuple(range(mask.ndim, mask.ndim + extra_dims)))
+                mask = np.broadcast_to(mask, self.variables[var]['values'].shape)
+
+        if inplace:
+            self.variables[var]['values'] = np.ma.masked_where(mask, self.variables[var]['values'])
+            return None
+
+        return np.ma.masked_where(mask, self.variables[var]['values'])
+
+    # -----------------------------------------------------------------------------
+
+    def minmax_filter(self, var, min_value=None, max_value=None, from_var=None, inplace=False):
+        """
+        General filter function that masks values in variable based on min and max.
+        If from_var is provided, that variable is checked for the condition.
+
+        Parameters
+        ----------
+        var : str or tuple
+            Variable name or tuple of variable names to filter
+        min_value : float or int, optional
+            Minimum value threshold
+        max_value : float or int, optional
+            Maximum value threshold
+        from_var : str, optional
+            Variable to use to check values for masking
+        inplace : bool, optional
+            Indicates if the operation should be performed in place (default: False)
+
+        Returns
+        -------
+        None or np.ma.MaskedArray or tuple of np.ma.MaskedArray
+            If inplace is True, None is returned, otherwise a tuple of (or single) masked arrays is returned
+        """
+        if min_value is None and max_value is None:
+            raise ValueError('Either min_value or max_value has to be provided')
+
+        if from_var is not None:
+            values = self.variables[from_var]['values']
+        else:
+            values = self.variables[var]['values']
+
+        if min_value is not None and max_value is not None:
+            mask = (values < min_value) | (values > max_value)
+        elif min_value is not None:
+            mask = values < min_value
+        elif max_value is not None:
+            mask = values > max_value
+        else:
+            mask = np.full_like(values, False)
+
+        if isinstance(var, str):
+            return self.filter(var, mask, inplace)
+
+        return tuple(self.filter(v, mask, inplace) for v in var)
+
+    # -----------------------------------------------------------------------------
+
+    def coordinates_filter(self, var, *args, inplace=False, **kwargs):
+        """
+        Filters the variable array based on coordinate borders.
+
+        This method applies a filter to the variable array based on the specified longitude and latitude borders.
+        The filtering is inclusive, meaning that values falling within the specified range are retained.
+        Be careful when applying, undesired behaviour could arise with cells crossing the -180 = 180 longitude.
+
+        Parameters
+        ----------
+        var : str or list or tuple
+            Variable or list of variable names to filter.
+        args : iterable
+            Coordinate borders to use as filter. The coordinates should be provided as follows:
+            - If providing individually: (min_lon, max_lon, min_lat, max_lat).
+            - If providing as tuples: ((min_lon, max_lon), (min_lat, max_lat)).
+        inplace : bool, optional
+            Indicates if the operation should be performed inplace (default: False).
+        **kwargs : dict, optional
+            Additional keyword arguments. Can be used to provide single filter options.
+
+        Returns
+        -------
+        np.ma.MaskedArray or tuple of np.ma.MaskedArray
+            Masked array(s) resulting from the filtering operation. If inplace is True, returns None.
+
+        Raises
+        ------
+        ValueError
+            If the number of arguments is invalid or coordinate limits are out of range.
 
         """
         if len(args) in [1, 4]:
             lon_min, lon_max, lat_min, lat_max = args
         elif len(args) == 2:
             (lon_min, lon_max), (lat_min, lat_max) = args
-        elif kwargs:
+        elif len(args) == 0 and kwargs:
             lon_min = kwargs.pop('lon_min', None)
             lon_max = kwargs.pop('lon_max', None)
             lat_min = kwargs.pop('lat_min', None)
@@ -417,305 +572,116 @@ class Kalkutun:
         lat_max = lat_max if lat_max else 90
 
         if lon_min >= lon_max or lon_min > 180 or lon_max < -180:
-            raise AssertionError(f'Longitude {lon_min} has to be smaller than {lon_max}')
+            raise AssertionError(f'Longitude {lon_min} has to be smaller than {lon_max} and both in range [-180, 180]')
         if lat_min >= lat_max or lat_min > 90 or lat_max < -90:
-            raise AssertionError(f'Latitude {lat_min} has to be smaller than {lat_max}')
+            raise AssertionError(f'Latitude {lat_min} has to be smaller than {lat_max} and both in range [-90, 90]')
 
-        new_data = self.data.copy()
-        if self.longitude.shape == self.data.shape:
-            if lon_min:
-                new_data = np.ma.masked_where(self.longitude < lon_min, new_data)
-            if lon_max:
-                new_data = np.ma.masked_where(self.longitude > lon_max, new_data)
-            if lat_min:
-                new_data = np.ma.masked_where(self.latitude < lat_min, new_data)
-            if lat_max:
-                new_data = np.ma.masked_where(self.latitude > lat_max, new_data)
-        else:
-            raise NotImplementedError('Filter not implemented for corner points, try filtering polygons.')
+        # get bounds of polygons to check
+        bounds = shapely.bounds(self.polygons)
 
-        if inplace:
-            self.data = new_data
+        # mask by latitudes
+        mask_lat = (bounds[..., 1] > lat_max) | (bounds[..., 3] < lat_min)
+
+        # check if any longitude is weirdly huge
+        any_huge = (bounds[..., 2] - bounds[..., 0]) > 180
+
+        # mask by longitudes
+        if lon_min < lon_max:
+            mask_lon = (bounds[..., 0] > lon_max) | (bounds[..., 2] < lon_min)
+            mask_lon[any_huge] = (bounds[any_huge, 2] > lon_max) & (bounds[any_huge, 0] < lon_min)
         else:
-            return new_data
+            mask_lon = ~any_huge & (bounds[..., 0] > lon_max) & (bounds[..., 2] < lon_min)
+
+        # calculate full mask
+        mask = mask_lat | mask_lon
+
+        if isinstance(var, str):
+            return self.filter(var, mask, inplace)
+        else:
+            return tuple(self.filter(v, mask, inplace) for v in var)
 
     # -----------------------------------------------------------------------------
-    def get_polygons(self):
+
+    def qa_filter(self, var, min_value, inplace=False):
         """
-        Returns a list of Polygon objects created from the product's longitude and latitude.
+        Filter the variable array based on a quality assurance (QA) value threshold.
+
+        Parameters
+        ----------
+        var : str or tuple
+            Variable name or tuple of variable names to be filtered
+        min_value : float
+            The minimum QA value to retain data.
+        inplace : bool, optional
+            If True, the function applies the masking operation on the data array in-place.
+            If False, the function returns a new masked array (default).
 
         Returns
         -------
-        np.ndarray
-            An array of Polygon objects created from the product's longitude and latitude.
+        None or np.ma.MaskedArray or tuple of np.ma.MaskedArray
+            If inplace is False and var is a single variable, a masked array with values below the minimum QA value
+            masked is returned. If var is a tuple, a tuple of masked arrays is returned.
+            If inplace is True, None is returned.
         """
-        # ToDo: check why is necessary to return a list with arrays and not just a single list with
-        #   polygons to be processed.
-        if self.longitude_corners is not None and self.latitude_corners is not None:
-            coords = np.moveaxis(np.asarray([self.longitude_corners, self.latitude_corners]), 0, -1)
-        else:
-            coords = [get_corners_from_grid(lon, lat, mode=self.format) for lon, lat
-                      in zip(self.longitude, self.latitude)]
-        return [shapely.polygons(crds) for crds in coords]
+        if 'qa_value' not in self.variables:
+            raise AttributeError("Could not find 'qa_value' in between variables, please redefine your quality flag "
+                                 "variable or use the minmax_filter method with the name of your variable.")
+
+        if (self.variables['qa_value']['values'] == 0.0).all() is True:
+            logging.error('Product seems to not have any valid quality value')
+            raise ValueError('All quality flag values are equal to 0')
+
+        return self.minmax_filter(var=var, min_value=min_value, from_var='qa_value', inplace=inplace)
 
     # -----------------------------------------------------------------------------
-    def get_polygon_dataframe(self, var_list=None, reset_index=True,
-                              split_antimeridian=True,
-                              drop_poles=False, drop_masked=True, drop_invalid=True,
-                              workers=None, geod=None):
+
+    def pole_filter(self, var, method=None, inplace=False, **kwargs):
         """
-        Generates a GeoDataFrame from the object coordinates and data.
 
         Parameters
         ----------
-        var_list : list
-            List of extra variables to be gridded
-        reset_index : bool, optional
-            Indicates if index should be reset before return or not.
-        split_antimeridian : bool, optional
-            If True (default), splits those polygons crossing the antimeridian.
-        drop_poles : bool, optional
-            If True, drops all geometries over the poles.
-        drop_masked : bool, optional
-            If True (default), drops any rows with masked values in the returned DataFrame.
-        drop_invalid : bool, optional
-            If True (default), drops all invalid geometries.
-        workers : int, optional
-            The number of worker processes to use for parallelization when checking geometries over the poles.
-        geod : Geodesic, optional
-            A `Geodesic` object to use for the calculations when checking geometries over the poles.
+        var
+        method
+        inplace
 
         Returns
         -------
-        pandas.DataFrame
-            A DataFrame containing the polygons of each cell and its actual value.
-            The DataFrame has two columns:
-                - 'value': The data values associated with each polygon.
-                - 'polygon': The Shapely Polygon objects representing geographical polygons.
+
         """
-        if var_list is None:
-            var_list = []
-        elif isinstance(var_list, str):
-            var_list = [var_list]
+        if method is None:
+            method = 'threshold'
 
-        # ToDo: Check if this is still neccesary, might be better to just remove it
-        if self.time_utc.ndim == self.data.ndim - 1:
-            time_utc = np.repeat(self.time_utc[..., None], self.data.shape[-1], axis=-1)
+        if method == 'threshold':
+            bounds = shapely.bounds(self.polygons)
+            thresh = kwargs.pop('threshold', 89.95)
+            mask = (bounds[..., 1] < -thresh) | (bounds[..., 3] > thresh)
+
+        elif method == 'geometry':
+            raise NotImplementedError('Sorry, still not implemented')
+
         else:
-            time_utc = self.time_utc
+            raise ValueError(f'Method {method} not available')
 
-        if self.format == 'centers':
-            old_shape = self.data.shape
-            new_shape = (old_shape[0], (old_shape[1] - 2) * (old_shape[2] - 2), *old_shape[3:])
-            data = self.data[:, 1:-1, 1:-1].reshape(new_shape)
-            time_utc = time_utc[:, 1:-1, 1:-1].reshape(new_shape)
-            kw_vars = {}
-            for k in var_list:
-                if k in self.variables.keys():
-                    old_shape = self.variables[k].shape
-                    new_shape = (old_shape[0], (old_shape[1] - 2) * (old_shape[2] - 2), *old_shape[3:])
-                    kw_vars[k] = self.variables[k][:, 1:-1, 1:-1].reshape(new_shape)
-
-        elif self.format in ['corners', 'polygons']:
-            old_shape = self.data.shape
-            new_shape = (old_shape[0], old_shape[1] * old_shape[2], *old_shape[3:])
-            data = self.data.reshape(new_shape)
-            time_utc = time_utc.reshape(new_shape)
-            kw_vars = {k: self.variables.get(k).reshape(new_shape) for k in var_list if k in self.variables.keys()}
+        if isinstance(var, str):
+            return self.filter(var, mask, inplace)
         else:
-            raise AssertionError('Format of the data not recognized')
-
-        logging.debug("Retrieve polygons from dataset")
-        polygons_array = self.get_polygons()
-        logging.debug(f"  Created {len(polygons_array)} polygons")
-        df = create_geo_dataset(polygons_array, data=data, timestamp=time_utc, **kw_vars)
-
-        if drop_masked and np.ma.is_masked(data):
-            df = [df[i].iloc[~di.mask] for i, di in enumerate(data)]
-            logging.debug(f"  Dropped masked to {len(df)} geometries")
-            if len(df) == 0:
-                return df
-
-        if drop_invalid or drop_poles or split_antimeridian:
-            is_valid = [shapely.is_valid(dfi['geometry']) for dfi in df]
-            logging.debug(f"  Dropped {np.sum([len(df[i])-is_valid[i].sum() for i in range(len(df))])} invalid geometries")
-            df = [dfi[is_valid[i]] for i, dfi in enumerate(df)]
-
-        if drop_poles:
-            over_pole = [are_over_pole(dfi['geometry'], geod=geod, workers=workers) for dfi in df]
-            logging.debug(f"  Dropped {np.sum((opi.sum() for opi in over_pole))} geometries over poles")
-            df = [dfi[~over_pole[i]] for i, dfi in enumerate(df)]
-
-        if split_antimeridian:
-            df = [split_anomaly_polygons(dfi, to_dataframe=True) for dfi in df]
-            logging.debug(f"  Split into {len(df)} polygons")
-
-        if reset_index:
-            df = [dfi.reset_index(drop=True) for dfi in df]
-
-        return df if len(df) > 1 else df[0]
-
-# =================================================================================
-
-class GridCrafter:
-    """
-    Adapting data to its new grid like a master of disguise.
-    Basically, just creates a regular grid, further capabilities are desired.
-
-    Parameters
-    ----------
-    longitudes, latitudes : np.ndarray
-        Grid corners to be used.
-    interpolation : str
-        Method of interpolation to be used.
-    min_fill : float
-        Fraction of the grid cell that has to be filled to be valid. If not provided, 0.0 by default.
-    qa_filter : float
-        Minimum value of the quality flag necessary to consider that measurement.
-    units : str
-        Desired output units of the main data of the product. It will try to convert both the data and its
-        standard deviation.
-    geod : pyproj.Geod
-        Geodetic object to be used for calculating areas of cells. Assumes Earth if none is provided.
-    """
-    __module__ = 'kintunwenu'
-
-    def __init__(
-            self,
-            grid_lons, grid_lats,
-            interpolation='weighted',
-            min_fill=None, qa_filter=None,
-            units=None, geod=None,
-            **kwargs
-    ):
-        self.lon_lim = np.min(grid_lons), np.max(grid_lons)
-        self.lat_lim = np.min(grid_lats), np.max(grid_lats)
-
-        if interpolation in ['weighted']:
-            self.interpolation = interpolation
-        else:
-            raise AssertionError("Interpolation method must be 'weighted'.")
-
-        self.min_fill = min_fill
-        self.units = units
-        self.geod = geod
-        self.qa_filter = qa_filter
-        self.lat_filter = kwargs.pop('lat_filter', None)
-
-        self.lons, self.lats = np.asarray(grid_lons), np.asarray(grid_lats)
-
-        if self.lons.ndim != self.lats.ndim:
-            raise ValueError(f"Grid dimensions have to be the same for latitudes and longitudes")
-        if self.lons.ndim > 2 or self.lats.ndim > 2:
-            raise ValueError(f"Grid dimensions must be 1 or 2, not {self.lons.ndim}")
-        if self.lons.ndim == 2:
-            if self.lons.shape != self.lats.shape:
-                raise ValueError(f"Grid longitudes and latitudes must have same shape. "
-                                 f"({self.lons.shape}) and ({self.lats.shape}) found.")
+            return tuple(self.filter(v, mask, inplace) for v in var)
 
     # -----------------------------------------------------------------------------
-    @classmethod
-    def from_grid(cls, grid_lons, grid_lats, **kwargs):
+
+    def invalid_filter(self, var, inplace=False):
         """
-        Creates an instance of GridCrafter but providing a grid.
-        Useful for non-monotonous grids.
 
         Parameters
         ----------
-        grid_lons, grid_lats : np.ndarray
-            Grid corners to be used.
-        """
-        return cls(grid_lons, grid_lats, **kwargs)
-
-    # -----------------------------------------------------------------------------
-    @classmethod
-    def from_size(cls, grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corners', **kwargs):
-        """
-        Creates an instance of GridCrafter but providing coordinates and a grid resolution.
-        Useful for monotonous grids.
-
-        Parameters
-        ----------
-        grid_size : float or tuple[float, float]
-            Size of the grid cells, if a float is given it will assume regular grid.
-        lon_lim : tuple[float, float]
-            Longitude limits of the grid, included.
-        lat_lim : tuple[float, float]
-            Latitude limits of the grid, included.
-        method : str
-            Indicates if the points are the corners or the centers of the grid. Default: 'corners'.
-        """
-        grid_lons, grid_lats = create_grid(grid_size, lon_lim, lat_lim, method)
-
-        return cls(grid_lons, grid_lats, **kwargs)
-
-    # -----------------------------------------------------------------------------
-    def __call__(self, *args, **kwargs):
-        return self.regrid(*args, **kwargs)
-
-    # -----------------------------------------------------------------------------
-    def regrid(self, product, qa_filter=None, coord_filter=None, drop_negatives=False, **kwargs):
-        """
-        Perform a regridding over a product
-
-        Parameters
-        ----------
-        product : Dataset or Kalkutun
-            Product to be regridded.
-        qa_filter : float, optional
-            Quality assurance filter to be applied.
-        coord_filter : tuple
-            Constrain the domain by masking values outside the limits given.
-        drop_negatives : bool, optional
-            Indicates if negative values should be considered or not.
+        var
+        inplace
 
         Returns
         -------
-        np.ndarray
-            2D-array with the weighted values.
+
         """
-        kprod = product.copy() if isinstance(product, Kalkutun) else Kalkutun(product)
-
-        drop_poles = kwargs.pop('drop_poles', False)
-        var_list = kwargs.pop('var_list', list(kprod.variables.keys()))
-
-        if coord_filter is not None:
-            kprod.coordinates_filter(coord_filter, inplace=True)
-        else:
-            kprod.coordinates_filter(self.lon_lim, self.lat_lim, inplace=True)
-
-        if self.units is not None:
-            kprod.convert_units(self.units)
-
-        if qa_filter is not None:
-            kprod.qa_filter(qa_filter, inplace=True)
-        elif self.qa_filter is not None:
-            kprod.qa_filter(self.qa_filter, inplace=True)
-
-        df_obs = kprod.get_polygon_dataframe(
-            var_list=var_list, drop_masked=True, drop_invalid=True,
-            drop_poles=drop_poles, split_antimeridian=True, reset_index=True
-        )
-
-        if drop_negatives is True:
-            df_obs = df_obs[df_obs['data'] > 0.0]
-
-        if len(df_obs) == 0:
-            logging.warning(f"    No polygons to regrid for {product}, returning None (might check masked data)")
-            return None
-
-        if self.interpolation == 'weighted':
-            regrid = weighted_regrid(
-                self.lons, self.lats, df_obs['geometry'], df_obs.drop('geometry', axis=1),
-                min_fill=self.min_fill, geod=self.geod, **kwargs
-            )
-            if not regrid:
-                logging.warning(f"    No cell filled for {product}, returning None (might check masked data)")
-                return None
-        else:
-            raise NotImplementedError('Interpolation type not implemented')
-
-        logging.debug(f"  Finished gridding of product ({next(iter(regrid.values())).count()} valid values)")
-        return regrid
+        # ToDo: implement
+        raise NotImplementedError('To be implemented')
 
 # =================================================================================

@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
 """
 =======================================================
 ===                   KINTUN-WENU                   ===
 =======================================================
 -> GEODATA
 
-Submodule that contains functions to deal with pd.DataFrame and pd.Series
+Submodule that contains functions to deal with geospatial datasets and geometries.
 """
 __all__ = [
     'create_geo_dataset',
@@ -16,16 +15,22 @@ __all__ = [
     'get_areas',
     'is_over_pole',
     'are_over_pole',
+    'create_grid',
+    'create_geo_grid',
+    'is_regular_grid'
 ]
 
 # === IMPORTS =========================================================
+
 import numpy as np
 import pandas as pd
 import shapely
+import pyproj
 from functools import partial
 from multiprocessing.pool import Pool, ThreadPool
-from pyproj import Geod
 from shapely.geometry import Polygon
+from .geom_utils import get_corners_from_grid
+
 
 # =================================================================================
 
@@ -87,6 +92,7 @@ def filter_over_pole(df, geod=None, workers=None):
 
     return df[~over_pole]
 
+
 # =================================================================================
 
 def filter_by_latitude(df, lat_thresh):
@@ -112,16 +118,12 @@ def filter_by_latitude(df, lat_thresh):
 
     """
     # ToDo: implementation for pd.Series.
-
-    # Create latitude bands using shapely Polygon objects
-    north_pole_band = Polygon([(-180, lat_thresh), (-180, 90), (180, 90), (180, lat_thresh)])
-    south_pole_band = Polygon([(-180, -lat_thresh), (-180, -90), (180, -90), (180, -lat_thresh)])
-
-    # Filter polygons that intersect with the latitude bands
-    df = df[~shapely.intersects(df['geometry'], north_pole_band)]
-    df = df[~shapely.intersects(df['geometry'], south_pole_band)]
-
+    north_band = Polygon([(-180, lat_thresh), (-180, 90), (180, 90), (180, lat_thresh)])
+    south_band = Polygon([(-180, -lat_thresh), (-180, -90), (180, -90), (180, -lat_thresh)])
+    df = df[~shapely.intersects(df['geometry'], north_band)]
+    df = df[~shapely.intersects(df['geometry'], south_band)]
     return df
+
 
 # =================================================================================
 
@@ -144,34 +146,27 @@ def get_intersections(a, b, threads=None):
     np.ndarray or pd.Series
         The intersections between the two arrays or LineStrings.
     """
-    # Convert to arrays
-    a = np.array([a]) if isinstance(a, shapely.Geometry) else a
-    b = np.array([b]) if isinstance(b, shapely.Geometry) else b
     a = np.array(a) if isinstance(a, (list, tuple)) else a
     b = np.array(b) if isinstance(b, (list, tuple)) else b
 
-    # Raise warning if different types of objects are passed
     if type(a) != type(b):
-        raise TypeError(f'Unexpected behavior could arise when indexing different type of objects '
-                        f'[{type(a)}, {type(b)}]')
+        raise TypeError(f"Geometry types don't match: {type(a)} vs {type(b)}")
 
-    if threads is None:
-        intersections = shapely.intersection(a, b)
+    if threads is None or isinstance(a, shapely.Geometry):
+        return shapely.intersection(a, b)
 
+    chunksize = 1 + len(a) // threads
+    if isinstance(a, pd.Series):
+        chunks = [(a.iloc[i * chunksize:(i + 1) * chunksize], b.iloc[i * chunksize:(i + 1) * chunksize])
+                  for i in range(threads)]
     else:
-        chunksize = 1 + len(a) // threads
-        if isinstance(a, pd.Series) and isinstance(b, pd.Series):
-            chunks = [(a.iloc[i * chunksize:(i + 1) * chunksize], b.iloc[i * chunksize:(i + 1) * chunksize]) for i in
-                      range(threads)]
-        else:
-            chunks = [(a[i * chunksize:(i + 1) * chunksize], b[i * chunksize:(i + 1) * chunksize]) for i in
-                      range(threads)]
+        chunks = [(a[i * chunksize:(i + 1) * chunksize], b[i * chunksize:(i + 1) * chunksize])
+                  for i in range(threads)]
 
-        with ThreadPool(processes=threads) as pool:
-            intersections = pool.starmap(shapely.intersection, chunks)
+    with ThreadPool(processes=threads) as pool:
+        intersections = pool.starmap(shapely.intersection, chunks)
 
-        intersections = pd.concat(intersections) if isinstance(a, pd.Series) else np.concatenate(intersections)
-
+    intersections = pd.concat(intersections) if isinstance(a, pd.Series) else np.concatenate(intersections)
     return intersections
 
 # =================================================================================
@@ -203,7 +198,7 @@ def get_areas(polygons, geod=None, workers=None):
 
     Parameters
     ----------
-    polygons : pd.Series of shapely.geometry.Polygon
+    polygons : pd.Series[shapely.geometry.Polygon]
         Series of input polygons.
     geod : pyproj.Geod, optional
         Geodetic calculator object, defaults to None (i.e., use the WGS84 ellipsoid).
@@ -217,16 +212,18 @@ def get_areas(polygons, geod=None, workers=None):
     """
     if geod is None:
         # Default to WGS84 ellipsoid: proj = '+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
-        geod = Geod('+a=6378137 +f=0.0033528106647475126')
+        # geod = Geod('+a=6378137 +f=0.0033528106647475126')
+        geod = pyproj.CRS.from_epsg(4326).get_geod()
 
     if workers is None:
         areas = polygons.map(partial(get_area, geod=geod))
     else:
-        chunksize = 1 + len(polygons)//workers
+        chunksize = 1 + len(polygons) // workers
         with Pool(processes=workers) as pool:
             areas = pool.map(partial(get_area, geod=geod), polygons, chunksize=chunksize)
 
     return pd.Series(areas, index=polygons.index)
+
 
 # =================================================================================
 
@@ -267,6 +264,7 @@ def is_over_pole(polygon, geod):
     # If the sum of the azimuth differences is zero, the polygon crosses over the pole
     return np.isclose(diff.sum(), 0.0)
 
+
 # =================================================================================
 
 def are_over_pole(polygons, geod=None, workers=None):
@@ -289,18 +287,146 @@ def are_over_pole(polygons, geod=None, workers=None):
     np.ndarray
         Boolean array indicating which polygons cover any of the poles.
     """
+    # ToDo: change to accept any iterable and work with arrays
+
     if geod is None:
         # Default to WGS84 ellipsoid: proj = '+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
-        geod = Geod('+a=6378137 +f=0.0033528106647475126')
+        # geod = Geod('+a=6378137 +f=0.0033528106647475126')
+        geod = pyproj.CRS.from_epsg(4326).get_geod()
 
     if workers is None:
-        over_pole = polygons.map(partial(is_over_pole, geod=geod))
-    else:
-        chunksize = 1 + len(polygons) // workers
-        with Pool(processes=workers) as pool:
-            over_pole = pool.map(partial(is_over_pole, geod=geod), polygons, chunksize=chunksize)
-        over_pole = np.asarray(over_pole)
+        return polygons.map(partial(is_over_pole, geod=geod))
 
-    return over_pole
+    chunksize = 1 + len(polygons) // workers
+    with Pool(processes=workers) as pool:
+        over_pole = pool.map(partial(is_over_pole, geod=geod), polygons, chunksize=chunksize)
+    return np.asarray(over_pole)
+
 
 # =================================================================================
+
+def create_grid(grid_size, lon_lim=(-180, 180), lat_lim=(-90, 90), method='corners'):
+    """
+    Creates equally spaced grid cells.
+
+    Parameters
+    ----------
+    grid_size : float or tuple[float, float]
+        Size of the grid cells. If a float, a regular grid is assumed.
+    lon_lim : tuple[float, float]
+        Longitude limits of the grid.
+    lat_lim : tuple[float, float]
+        Latitude limits of the grid.
+    method : str, optional
+        Indicates if the points represent cell 'corners' (default) or centers.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        A tuple with (lons, lats) as 1D arrays.
+    """
+    if isinstance(grid_size, (float, int)):
+        grid_size = (grid_size, grid_size)
+    else:
+        grid_size = tuple(grid_size)
+
+    if len(lat_lim) != 2 or len(lon_lim) != 2:
+        raise AssertionError("lat_lim and lon_lim must be 2-tuples.")
+
+    if method == 'corners':
+        # Compute the number of grid cells in each direction
+        nlon = int((lon_lim[1] - lon_lim[0]) / grid_size[0])
+        nlat = int((lat_lim[1] - lat_lim[0]) / grid_size[1])
+        # Adjust limits to match the exact cell size
+        adj_lon_lim = (lon_lim[0], lon_lim[0] + nlon * grid_size[0])
+        adj_lat_lim = (lat_lim[0], lat_lim[0] + nlat * grid_size[1])
+
+        grid_lon = np.linspace(*adj_lon_lim, num=nlon + 1, endpoint=True)
+        grid_lat = np.linspace(*adj_lat_lim, num=nlat + 1, endpoint=True)
+    else:
+        raise NotImplementedError(f"Method '{method}' is not supported.")
+
+    return grid_lon, grid_lat
+
+
+# =================================================================================
+
+def create_geo_grid(grid_lat, grid_lon, mode='corners', crs='WGS84'):
+    """
+    Generates a GeoDataFrame with grid cell polygons defined by latitude and longitude coordinates.
+
+    Parameters
+    ----------
+    grid_lat : array-like
+        Latitudes (in degrees).
+    grid_lon : array-like
+        Longitudes (in degrees).
+    mode : str, optional
+        'corners' (default) defines cells by corner coordinates.
+    crs : str, optional
+        The coordinate reference system (default: 'WGS84')
+
+    Returns
+    -------
+    gpd.GeoDataFrame
+        A GeoDataFrame with columns 'xi', 'yi', and 'geometry' for each grid cell.
+    """
+    grid_lat = np.asarray(grid_lat)
+    grid_lon = np.asarray(grid_lon)
+
+    if grid_lat.ndim == 1 and grid_lon.ndim == 1:
+        lat_mesh, lon_mesh = np.meshgrid(grid_lat, grid_lon, indexing='ij')
+    elif grid_lat.shape == grid_lon.shape:
+        lat_mesh = grid_lat
+        lon_mesh = grid_lon
+    else:
+        raise ValueError(f"Latitude and longitude arrays must be same shape or 1D. Got {grid_lat.shape}, {grid_lon.shape}.")
+
+    corners = get_corners_from_grid(lat_mesh, lon_mesh, mode=mode) # (n, 2) in lon, lat
+    if corners.shape[-1] != 2:
+        raise ValueError("Expected corner coordinates in (lon, lat) order with shape (..., 2)")
+
+    # Validate coordinate order
+    if np.abs(corners[..., 1]).max() > 90 and np.abs(corners[..., 0]).max() <= 90:
+        raise ValueError("Coorners appear to be in (lat, lon) order, expected (lon, lat).")
+
+    polys_grid = shapely.polygons(corners)
+
+    shape = lat_mesh.shape
+    grid_xi = np.tile(np.arange(shape[1] - 1), shape[0] - 1)
+    grid_yi = np.arange(shape[0] - 1).repeat(shape[1] - 1)
+
+    df_grid = gpd.GeoDataFrame({
+        'xi': grid_xi,
+        'yi': grid_yi,
+        'geometry': polys_grid
+    }, crs=crs)
+
+    return df_grid
+
+# =================================================================================
+
+def is_regular_grid(grid_lat, grid_lon):
+    """
+    Checks if the provided latitude and longitude arrays define a regular grid.
+
+    Parameters
+    ----------
+    grid_lon : np.ndarray
+        Array of longitudes (1D or 2D).
+    grid_lat : np.ndarray
+        Array of latitudes (1D or 2D).
+
+    Returns
+    -------
+    bool
+        True if the grid is regular; otherwise, False.
+    """
+    if grid_lat.ndim == 2 and grid_lon.ndim == 2:
+        lat_diff = np.diff(grid_lat, axis=0)
+        lon_diff = np.diff(grid_lon, axis=1)
+        return np.allclose(lat_diff, lat_diff[:, 0]) and np.allclose(lon_diff, lon_diff[0, :])
+    elif grid_lat.ndim == 1 and grid_lon.ndim == 1:
+        return True
+
+    raise ValueError("grid_lat and grid_lon must both be 1D or both be 2D.")
