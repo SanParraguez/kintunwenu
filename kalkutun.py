@@ -43,7 +43,7 @@ class Kalkutun:
 
     kw_vars : str
         Dictionary with sub-dictionaries for each variable to be stored. Each entrance has to have either
-        a path to the variable in the netCDF file or a formula to calculate it.
+        a 'path' to the variable in the netCDF file or a 'formula' to calculate it.
 
         Also, the following options are supported:
             - units     : string indicating units to set the variable into.
@@ -62,6 +62,7 @@ class Kalkutun:
             }
         }
 
+
     Attributes
     ----------
     dimensions : dict
@@ -72,6 +73,7 @@ class Kalkutun:
         The format of the grid coordinates, if available.
     grid_vars : dict
         A dictionary containing information about the grid variables, if available.
+
 
     Methods
     -------
@@ -84,8 +86,14 @@ class Kalkutun:
     get_polygons()
         Retrieves an array of Polygon objects representing the grid cells of the dataset.
 
-    get_polygon_dataframe()
-        Returns a pandas DataFrame containing information about the polygons.
+    filter
+
+    minmax_filter
+
+    qa_filter
+
+    coordinates_filter(self, var, *args, inplace=False, **kwargs)
+        Filters the variable array based on coordinate borders.
 
     """
 
@@ -240,8 +248,13 @@ class Kalkutun:
             lat_var = get_netcdf_var(dataset, kw_grid['latitude']['path'])
             lon_var = get_netcdf_var(dataset, kw_grid['longitude']['path'])
 
+            if lat_var.dimensions != lon_var.dimensions:
+                raise ValueError(f"Variables of longitudes and latitudes have different dimensions: "
+                                 f"{lon_var.dimensions} != {lat_var.dimensions}")
+
             self._grid_vars = {
                 'corner_dim': dim,
+                'grid_dim'  : tuple(x for x in lat_var.dimensions if x != dim),
                 'latitude'  : {'dims': lat_var.dimensions, 'values':  lat_var[:]},
                 'longitude' : {'dims': lon_var.dimensions, 'values':  lon_var[:]},
             }
@@ -291,6 +304,11 @@ class Kalkutun:
     def grid_format(self) -> str:
         """Returns the format in which the grid cells were defined."""
         return self._grid_format
+
+    @property
+    def grid_dimensions(self) -> tuple:
+        """Returns the dimensions of the horizontal grid."""
+        return self._grid_vars['grid_dim']
 
     # -----------------------------------------------------------------------------
 
@@ -376,7 +394,9 @@ class Kalkutun:
         np.ndarray
             An array of Polygon objects representing each grid cell.
         """
-        return self._polygons or self.get_polygons()
+        if self._polygons is None:
+            self.update_polygons()
+        return self._polygons
 
     @polygons.deleter
     def polygons(self):
@@ -438,6 +458,12 @@ class Kalkutun:
 
         if isinstance(var, tuple):
             raise TypeError("Filter method does not support multiple variables. Use a single variable name.")
+
+        if mask.ndim != self.variables[var]['values'].ndim:
+            if self.variables[var]['values'].shape[:mask.ndim] == mask.shape:
+                extra_dims = self.variables[var]['values'].ndim - mask.ndim
+                mask = np.expand_dims(mask, axis=tuple(range(mask.ndim, mask.ndim+extra_dims)))
+                mask = np.broadcast_to(mask, self.variables[var]['values'].shape)
 
         if inplace:
             self.variables[var]['values'] = np.ma.masked_where(mask, self.variables[var]['values'])
@@ -522,5 +548,74 @@ class Kalkutun:
             raise ValueError('All quality flag values are equal to 0')
 
         return self.minmax_filter(var=var, min_value=min_value, from_var='qa_value', inplace=inplace)
+
+    # -----------------------------------------------------------------------------
+
+    def coordinates_filter(self, var, *args, inplace=False, **kwargs):
+        """
+        Filters the variable array based on coordinate borders.
+
+        This method applies a filter to the variable array based on the specified longitude and latitude borders.
+        The filtering is inclusive, meaning that values falling within the specified range are retained.
+
+        Parameters
+        ----------
+        var : str or list or tuple
+            Variable or list of variable names to filter.
+        args : iterable
+            Coordinate borders to use as filter. The coordinates should be provided as follows:
+            - If providing individually: (min_lon, max_lon, min_lat, max_lat).
+            - If providing as tuples: ((min_lon, max_lon), (min_lat, max_lat)).
+        inplace : bool, optional
+            Indicates if the operation should be performed inplace (default: False).
+        **kwargs : dict, optional
+            Additional keyword arguments. Can be used to provide single filter options.
+
+        Returns
+        -------
+        np.ma.MaskedArray or tuple of np.ma.MaskedArray
+            Masked array(s) resulting from the filtering operation. If inplace is True, returns None.
+
+        Raises
+        ------
+        ValueError
+            If the number of arguments is invalid or coordinate limits are out of range.
+
+        """
+        if len(args) in [1, 4]:
+            lon_min, lon_max, lat_min, lat_max = args
+        elif len(args) == 2:
+            (lon_min, lon_max), (lat_min, lat_max) = args
+        elif len(args) == 0 and kwargs:
+            lon_min = kwargs.pop('lon_min', None)
+            lon_max = kwargs.pop('lon_max', None)
+            lat_min = kwargs.pop('lat_min', None)
+            lat_max = kwargs.pop('lat_max', None)
+        else:
+            raise ValueError('Coordinates limits should be provided by one or all together.')
+
+        lon_min = lon_min if lon_min else -180
+        lon_max = lon_max if lon_max else 180
+        lat_min = lat_min if lat_min else -90
+        lat_max = lat_max if lat_max else 90
+
+        if lon_min >= lon_max or lon_min > 180 or lon_max < -180:
+            raise AssertionError(f'Longitude {lon_min} has to be smaller than {lon_max} and both in range [-180, 180]')
+        if lat_min >= lat_max or lat_min > 90 or lat_max < -90:
+            raise AssertionError(f'Latitude {lat_min} has to be smaller than {lat_max} and both in range [-90, 90]')
+
+        bounds = shapely.bounds(self.polygons)
+
+        logging.info(type(bounds))
+        logging.info(bounds.shape)
+        logging.info(bounds.flatten()[0])
+        logging.info([lon_min, lon_max, lat_min, lat_max])
+        mask = (bounds[..., 0] > lon_min) | (bounds[..., 1] > lat_min) | \
+               (bounds[..., 2] < lon_max) | (bounds[..., 3] < lat_max)
+
+        if isinstance(var, str):
+            return self.filter(var, mask, inplace)
+
+        return tuple(self.filter(v, mask, inplace) for v in var)
 
 # =================================================================================
